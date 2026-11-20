@@ -8,6 +8,7 @@ import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
@@ -15,9 +16,9 @@ import androidx.core.view.WindowCompat
 
 private val DarkColorScheme = darkColorScheme(
     primary = PrimaryGradientStart,
-    onPrimary = TextPrimary,
+    onPrimary = Color.White,
     secondary = PrimaryGradientEnd,
-    onSecondary = DarkBackground,
+    onSecondary = Color.White,
     tertiary = AccentSuccess,
     background = DarkBackground,
     onBackground = TextPrimary,
@@ -25,17 +26,24 @@ private val DarkColorScheme = darkColorScheme(
     onSurface = TextPrimary,
     surfaceVariant = DarkElevated,
     onSurfaceVariant = TextSecondary,
+    surfaceTint = Color.Transparent,
+    surfaceContainerLowest = DarkBackground,
+    surfaceContainerLow = DarkSurface,
+    surfaceContainer = DarkSurface,
+    surfaceContainerHigh = DarkElevated,
+    surfaceContainerHighest = DarkElevated,
     outline = DarkBorder,
+    outlineVariant = DarkBorder,
     error = AccentError,
-    onError = TextPrimary
+    onError = Color.White
 )
 
 val SiphonShapes = Shapes(
     extraSmall = RoundedCornerShape(8.dp),
     small = RoundedCornerShape(12.dp),
     medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(20.dp),      // 20dp rounded cards per PRD
-    extraLarge = RoundedCornerShape(28.dp)  // 28dp bottom sheets per PRD
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(28.dp)
 )
 
 @Composable
@@ -43,7 +51,7 @@ fun SiphonTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
-    // Siphon is Dark-First by design
+    // SIPHON is dark-only by design
     val colorScheme = DarkColorScheme
 
     val view = LocalView.current

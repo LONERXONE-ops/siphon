@@ -14,8 +14,8 @@ android {
         applicationId = "com.lonerxone.siphon"
         minSdk = 29
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = (project.findProperty("buildNumber") as String?)?.toIntOrNull() ?: 1
+        versionName = "0.3." + ((project.findProperty("buildNumber") as String?) ?: "0")
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")

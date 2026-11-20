@@ -267,6 +267,10 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
+                UpdateSection()
+
+                Spacer(modifier = Modifier.height(24.dp))
+
                 // Samsung Galaxy A06 Battery Guide
                 Text(
                     text = "BATTERY & BACKGROUND RESILIENCE",
@@ -323,7 +327,7 @@ fun SettingsScreen(
 
                 SiphonCard(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "SIPHON v2.0.0",
+                        text = "SIPHON v${com.lonerxone.siphon.BuildConfig.VERSION_NAME}",
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         color = TextPrimary
