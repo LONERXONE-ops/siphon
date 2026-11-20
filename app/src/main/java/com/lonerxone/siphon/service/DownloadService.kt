@@ -92,7 +92,7 @@ class DownloadService : Service() {
 
             downloadDao.updateStatus(downloadId, DownloadStatus.DOWNLOADING, pausedByUser = false)
 
-            val stagingDir = storageManager.getStagingDirectory()
+            val stagingDir = File(storageManager.getStagingDirectory(), item.id).also { it.mkdirs() }
             val prefs = preferencesRepository.userPreferencesFlow.first()
             val engine = engineRouter.selectEngine(item.url)
 
@@ -172,7 +172,8 @@ class DownloadService : Service() {
                     }
                 },
                 onFailure = { err ->
-                    val isPaused = downloadDao.getById(downloadId)?.status == DownloadStatus.PAUSED_BY_USER
+                    val st = downloadDao.getById(downloadId)?.status
+                    val isPaused = st == DownloadStatus.PAUSED_BY_USER || st == DownloadStatus.PAUSED_NO_WIFI
                     if (!isPaused) {
                         downloadDao.updateStatus(
                             downloadId,
@@ -194,7 +195,7 @@ class DownloadService : Service() {
     private fun pauseDownloadJob(downloadId: String) {
         serviceScope.launch {
             downloadDao.updateStatus(downloadId, DownloadStatus.PAUSED_BY_USER, pausedByUser = true)
-            val engine = engineRouter.selectEngine("")
+            val engine = downloadDao.getById(downloadId)?.let { engineRouter.selectEngine(it.url) } ?: engineRouter.selectEngine("")
             engine.pause(downloadId)
             activeJobs[downloadId]?.cancel()
             activeJobs.remove(downloadId)
@@ -204,7 +205,7 @@ class DownloadService : Service() {
 
     private fun cancelDownloadJob(downloadId: String) {
         serviceScope.launch {
-            val engine = engineRouter.selectEngine("")
+            val engine = downloadDao.getById(downloadId)?.let { engineRouter.selectEngine(it.url) } ?: engineRouter.selectEngine("")
             engine.cancel(downloadId)
             activeJobs[downloadId]?.cancel()
             activeJobs.remove(downloadId)

@@ -22,6 +22,18 @@ android {
         }
     }
 
+    signingConfigs {
+        getByName("debug") {
+            val ks = file("debug.keystore")
+            if (ks.exists()) {
+                storeFile = ks
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false

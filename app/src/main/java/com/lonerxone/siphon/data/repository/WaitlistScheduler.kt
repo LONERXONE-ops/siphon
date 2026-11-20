@@ -96,7 +96,7 @@ class WaitlistScheduler @Inject constructor(
             // Pause active downloads that are NOT already paused by user
             val activeItems = downloadDao.getActiveDownloads().first()
             for (item in activeItems) {
-                if (!item.pausedByUser && item.status == DownloadStatus.DOWNLOADING) {
+                if (!item.pausedByUser && !item.mobileDataApproved && item.status == DownloadStatus.DOWNLOADING) {
                     downloadDao.updateStatus(
                         id = item.id,
                         status = DownloadStatus.PAUSED_NO_WIFI,

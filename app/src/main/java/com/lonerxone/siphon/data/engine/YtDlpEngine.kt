@@ -172,12 +172,28 @@ class YtDlpEngine @Inject constructor(
                 processId = processId
             ) { progress, etaInSeconds, line ->
                 val eta = etaInSeconds.toLong()
+                val text = line ?: ""
+                fun toBytes(n: String, u: String): Long {
+                    val v = n.toDoubleOrNull() ?: return 0L
+                    val mul = when (u.uppercase().take(1)) {
+                        "K" -> 1024.0
+                        "M" -> 1024.0 * 1024.0
+                        "G" -> 1024.0 * 1024.0 * 1024.0
+                        "T" -> 1024.0 * 1024.0 * 1024.0 * 1024.0
+                        else -> 1.0
+                    }
+                    return (v * mul).toLong()
+                }
+                val sizeMatch = Regex("""of\s+~?\s*([\d.]+)\s*([KMGT]?i?B)""").find(text)
+                val speedMatch = Regex("""at\s+([\d.]+)\s*([KMGT]?i?B)/s""").find(text)
+                val sizeBytes = sizeMatch?.let { toBytes(it.groupValues[1], it.groupValues[2]) } ?: 0L
+                val speedBytes = speedMatch?.let { toBytes(it.groupValues[1], it.groupValues[2]) } ?: 0L
                 onProgress(
                     DownloadProgress(
                         progressPercent = progress,
-                        bytesDownloaded = 0L,
-                        totalBytes = 0L,
-                        speedBps = 0L,
+                        bytesDownloaded = (sizeBytes * progress / 100.0).toLong(),
+                        totalBytes = sizeBytes,
+                        speedBps = speedBytes,
                         etaSeconds = eta
                     )
                 )

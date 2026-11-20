@@ -79,7 +79,7 @@ class HomeViewModel @Inject constructor(
                     sizeFormatted = format?.formattedSize ?: "unknown size"
                 )
             } else {
-                startDownloadNow(metadata, formatId, formatLabel, mobileApproved = false)
+                startDownloadNow(metadata, formatId, formatLabel, mobileApproved = !netState.isWifi)
             }
         }
     }

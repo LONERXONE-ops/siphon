@@ -15,7 +15,9 @@ import com.lonerxone.siphon.data.storage.StorageStatus
 import com.lonerxone.siphon.service.DownloadService
 import com.yausername.youtubedl_android.YoutubeDL
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -48,7 +50,12 @@ class DownloadRepositoryImpl @Inject constructor(
         }
         scheduler.onPauseItemForNoWifi = { id ->
             val engine = engineRouter.selectEngine("")
-            // Signal engine to stop
+            CoroutineScope(Dispatchers.IO).launch {
+                val pausedItem = downloadDao.getById(id)
+                if (pausedItem != null && !pausedItem.mobileDataApproved) {
+                    engineRouter.selectEngine(pausedItem.url).pause(id)
+                }
+            }
         }
     }
 
@@ -179,7 +186,7 @@ class DownloadRepositoryImpl @Inject constructor(
         // CRITICAL INVARIANT: Manual pause marks pausedByUser = true
         downloadDao.updateStatus(id, DownloadStatus.PAUSED_BY_USER, pausedByUser = true)
         val engine = engineRouter.selectEngine("")
-        engine.pause(id); Unit
+        (downloadDao.getById(id)?.let { engineRouter.selectEngine(it.url) } ?: engine).pause(id); Unit
     }
 
     override suspend fun resumeDownload(id: String) = withContext(Dispatchers.IO) {
@@ -211,7 +218,10 @@ class DownloadRepositoryImpl @Inject constructor(
     }
 
     override suspend fun pauseAll() = withContext(Dispatchers.IO) {
-        downloadDao.pauseAll()
+        val activeNow = downloadDao.getActiveDownloads().first()
+        val pausedResult = downloadDao.pauseAll()
+        activeNow.forEach { engineRouter.selectEngine(it.url).pause(it.id) }
+        pausedResult
     }
 
     override suspend fun resumeAll() = withContext(Dispatchers.IO) {
