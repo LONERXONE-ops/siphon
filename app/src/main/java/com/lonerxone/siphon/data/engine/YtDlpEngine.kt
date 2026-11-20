@@ -151,7 +151,6 @@ class YtDlpEngine @Inject constructor(
 
                 // Continuous resume from partial .part files
                 addOption("-c")
-                addOption("--no-part=false")
 
                 // Embed metadata and thumbnails if applicable
                 addOption("--add-metadata")
