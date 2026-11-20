@@ -261,7 +261,7 @@ class DownloadService : Service() {
      * On API 35+ the system will call this via reflection when the FGS dataSync limit is hit.
      */
     @Suppress("unused")
-    fun onTimeout(startId: Int, fgsType: Int) {
+    override fun onTimeout(startId: Int, fgsType: Int) {
         activeJobs.forEach { (id, job) ->
             job.cancel()
         }

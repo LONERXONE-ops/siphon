@@ -179,7 +179,7 @@ class DownloadRepositoryImpl @Inject constructor(
         // CRITICAL INVARIANT: Manual pause marks pausedByUser = true
         downloadDao.updateStatus(id, DownloadStatus.PAUSED_BY_USER, pausedByUser = true)
         val engine = engineRouter.selectEngine("")
-        engine.pause(id)
+        engine.pause(id); Unit
     }
 
     override suspend fun resumeDownload(id: String) = withContext(Dispatchers.IO) {

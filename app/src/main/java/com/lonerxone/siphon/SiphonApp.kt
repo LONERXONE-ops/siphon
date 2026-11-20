@@ -5,7 +5,7 @@ import android.util.Log
 import com.lonerxone.siphon.data.db.dao.DownloadDao
 import com.lonerxone.siphon.data.repository.WaitlistScheduler
 import com.yausername.youtubedl_android.YoutubeDL
-import com.yausername.youtubedl_android.ffmpeg.FFmpeg
+import com.yausername.ffmpeg.FFmpeg
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

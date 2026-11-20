@@ -36,7 +36,7 @@ fun SiphonPrimaryButton(
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(if (enabled) SiphonPrimaryGradient else DarkElevated.copy(alpha = 0.5f))
+            .then(if (enabled) Modifier.background(SiphonPrimaryGradient) else Modifier.background(DarkElevated.copy(alpha = 0.5f)))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center
