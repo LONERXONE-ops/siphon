@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Gradient-ish "S" letter for SIPHON, in the brand teal/purple -->
+    <path
+        android:fillColor="#7C5CFF"
+        android:pathData="M54,20 C40,20 30,30 30,42 C30,54 40,58 54,62 C68,66 78,70 78,82 C78,90 70,96 54,96 C42,96 32,90 28,82 L36,78 C38,84 45,88 54,88 C66,88 70,84 70,80 C70,74 60,70 48,66 C34,62 22,56 22,42 C22,28 36,12 54,12 C68,12 76,18 80,26 L72,30 C68,24 62,20 54,20 Z" />
+
+</vector>
