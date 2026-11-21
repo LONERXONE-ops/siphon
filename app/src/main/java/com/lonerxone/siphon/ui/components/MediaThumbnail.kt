@@ -39,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 private val frameCache = LruCache<String, ImageBitmap>(48)
+private val ThumbBrush = Brush.verticalGradient(listOf(DarkElevated, DarkSurface))
 
 /**
  * Shows a real frame from the downloaded video when the file exists,
@@ -63,7 +64,7 @@ fun MediaThumbnail(item: DownloadItem, modifier: Modifier = Modifier) {
     }
 
     Box(
-        modifier = modifier.background(Brush.verticalGradient(listOf(DarkElevated, DarkSurface))),
+        modifier = modifier.background(ThumbBrush),
         contentAlignment = Alignment.Center
     ) {
         val bitmap = frame

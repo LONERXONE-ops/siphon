@@ -61,6 +61,13 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+    <activity
+            android:name=".ui.player.PlayerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode"
+            android:screenOrientation="fullSensor"
+            android:theme="@style/Theme.Siphon" />
+
     </application>
 
 </manifest>

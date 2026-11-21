@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.webkit.MimeTypeMap
 import android.widget.Toast
+import com.lonerxone.siphon.ui.player.PlayerActivity
 
 fun formatFileSize(bytes: Long): String {
     if (bytes <= 0L) return "0 MB"
@@ -50,8 +51,23 @@ fun guessMimeType(context: Context, uriString: String, name: String): String {
     return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*"
 }
 
+/** Videos and audio open in the built-in player, everything else asks Android. */
 fun openMedia(context: Context, uriString: String, name: String) {
     val mime = guessMimeType(context, uriString, name)
+
+    if (mime.startsWith("video/") || mime.startsWith("audio/")) {
+        try {
+            val intent = Intent(context, PlayerActivity::class.java).apply {
+                data = Uri.parse(uriString)
+                putExtra(PlayerActivity.EXTRA_TITLE, name)
+            }
+            context.startActivity(intent)
+            return
+        } catch (e: Exception) {
+            // fall through to the system chooser
+        }
+    }
+
     val intent = Intent(Intent.ACTION_VIEW).apply {
         setDataAndType(Uri.parse(uriString), mime)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)

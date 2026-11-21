@@ -1,14 +1,20 @@
 package com.lonerxone.siphon.ui.settings
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,11 +24,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryAlert
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SdCard
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
@@ -33,14 +44,22 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.lonerxone.siphon.ui.components.SiphonCard
 import com.lonerxone.siphon.ui.components.SiphonSecondaryButton
 import com.lonerxone.siphon.ui.theme.AccentError
@@ -53,6 +72,7 @@ import com.lonerxone.siphon.ui.theme.PrimaryGradientStart
 import com.lonerxone.siphon.ui.theme.TextMuted
 import com.lonerxone.siphon.ui.theme.TextPrimary
 import com.lonerxone.siphon.ui.theme.TextSecondary
+import com.yausername.youtubedl_android.YoutubeDL
 
 @Composable
 fun SettingsScreen(
@@ -74,14 +94,32 @@ fun SettingsScreen(
         }
     }
 
+    // Battery optimisation status, refreshed every time the user comes back to the app
+    val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+    var batteryUnrestricted by remember {
+        mutableStateOf(powerManager.isIgnoringBatteryOptimizations(context.packageName))
+    }
+    LifecycleResumeEffect(Unit) {
+        batteryUnrestricted = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+        onPauseOrDispose { }
+    }
+
+    val engineVersion = remember(engineState) {
+        try {
+            YoutubeDL.getInstance().versionName(context)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     val savedUri = prefs.sdFolderUri
     val usingPhoneStorage = savedUri == null || Uri.parse(savedUri).scheme == "siphon"
     val sdMounted = viewModel.isSdCardMounted
 
-    val locationTitle = if (usingPhoneStorage) "Phone storage" else "Custom folder"
+    val locationStatus = if (usingPhoneStorage) "Phone storage (Download/SIPHON)" else "Custom folder"
     val locationDetail = when {
-        usingPhoneStorage && sdMounted -> "Saving to Download/SIPHON. An SD card is available if you want to use it."
-        usingPhoneStorage -> "Saving to Download/SIPHON. No SD card detected."
+        usingPhoneStorage && sdMounted -> "Files are saved to Download/SIPHON. An SD card is available if you want to use it."
+        usingPhoneStorage -> "Files are saved to Download/SIPHON. No SD card detected."
         sdMounted -> "Folder: ${Uri.parse(savedUri).lastPathSegment}"
         else -> "If this folder is on a missing SD card, files are saved to Download/SIPHON instead."
     }
@@ -106,34 +144,16 @@ fun SettingsScreen(
                 )
                 Spacer(modifier = Modifier.height(22.dp))
 
-                SectionTitle("SAVE LOCATION")
-                SiphonCard(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = if (usingPhoneStorage) Icons.Default.Folder else Icons.Default.SdCard,
-                            contentDescription = null,
-                            tint = if (usingPhoneStorage) PrimaryGradientStart else AccentSuccess,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = locationTitle,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = TextPrimary
-                            )
-                            Text(
-                                text = locationDetail,
-                                fontSize = 12.sp,
-                                color = TextSecondary
-                            )
-                        }
-                    }
-
+                // ---------------- Save location
+                CollapsibleCard(
+                    title = "Save location",
+                    icon = if (usingPhoneStorage) Icons.Default.Folder else Icons.Default.SdCard,
+                    iconTint = TextPrimary,
+                    initiallyExpanded = true,
+                    status = locationStatus,
+                    statusColor = TextSecondary
+                ) {
+                    Text(text = locationDetail, fontSize = 12.sp, color = TextSecondary)
                     Spacer(modifier = Modifier.height(14.dp))
 
                     SiphonSecondaryButton(
@@ -153,10 +173,56 @@ fun SettingsScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                SectionTitle("NETWORK AND WAITLIST")
-                SiphonCard(modifier = Modifier.fillMaxWidth()) {
+                // ---------------- Background downloads
+                CollapsibleCard(
+                    title = "Background downloads",
+                    icon = if (batteryUnrestricted) Icons.Default.CheckCircle else Icons.Default.BatteryAlert,
+                    iconTint = if (batteryUnrestricted) AccentSuccess else AccentWarning,
+                    initiallyExpanded = false,
+                    status = if (batteryUnrestricted) "On: SIPHON can run in the background" else "Off: downloads may stop when the screen is off",
+                    statusColor = if (batteryUnrestricted) AccentSuccess else AccentWarning
+                ) {
+                    Text(
+                        text = if (batteryUnrestricted) {
+                            "Battery optimisation is off for SIPHON, so long and overnight downloads can finish and the waitlist can start by itself."
+                        } else {
+                            "Many phones stop background apps to save battery. Allow SIPHON to run in the background so long and overnight downloads can finish."
+                        },
+                        fontSize = 12.sp,
+                        color = TextSecondary
+                    )
+
+                    if (!batteryUnrestricted) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        SiphonSecondaryButton(
+                            text = "Allow background activity",
+                            onClick = {
+                                try {
+                                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                        data = Uri.parse("package:${context.packageName}")
+                                    }
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // ---------------- Network and waitlist
+                CollapsibleCard(
+                    title = "Network and waitlist",
+                    icon = Icons.Default.Wifi,
+                    iconTint = TextPrimary,
+                    initiallyExpanded = false,
+                    status = "${prefs.concurrencyLimit} at a time" + if (prefs.allowMeteredWifi) ", hotspots allowed" else "",
+                    statusColor = TextSecondary
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -200,18 +266,19 @@ fun SettingsScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                SectionTitle("DOWNLOAD ENGINE")
-                SiphonCard(modifier = Modifier.fillMaxWidth()) {
+                // ---------------- Download engine
+                CollapsibleCard(
+                    title = "Download engine",
+                    icon = Icons.Default.Refresh,
+                    iconTint = TextPrimary,
+                    initiallyExpanded = false,
+                    status = if (engineVersion != null) "yt-dlp $engineVersion" else "yt-dlp",
+                    statusColor = TextSecondary
+                ) {
                     Text(
-                        text = "yt-dlp engine",
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp,
-                        color = TextPrimary
-                    )
-                    Text(
-                        text = "Update it when a site stops working. Sites change often and the engine needs to keep up.",
+                        text = "SIPHON updates the engine by itself. If a site stops working, you can also update it manually.",
                         fontSize = 12.sp,
                         color = TextSecondary
                     )
@@ -252,66 +319,31 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
+                // ---------------- App updates
                 UpdateSection()
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                SectionTitle("BACKGROUND DOWNLOADS")
-                SiphonCard(modifier = Modifier.fillMaxWidth()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.BatteryAlert,
-                            contentDescription = null,
-                            tint = AccentWarning,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "Keep downloads running",
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 14.sp,
-                            color = TextPrimary
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Text(
-                        text = "Many phones stop background apps to save battery. Allow SIPHON to run in the background so long and overnight downloads can finish.",
-                        fontSize = 12.sp,
-                        color = TextSecondary
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    SiphonSecondaryButton(
-                        text = "Allow background activity",
-                        onClick = {
-                            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                data = Uri.parse("package:${context.packageName}")
-                            }
-                            context.startActivity(intent)
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                SectionTitle("ABOUT")
-                SiphonCard(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = "SIPHON v${com.lonerxone.siphon.BuildConfig.VERSION_NAME}",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = TextPrimary
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
+                // ---------------- About
+                CollapsibleCard(
+                    title = "About",
+                    icon = Icons.Default.Info,
+                    iconTint = TextPrimary,
+                    initiallyExpanded = false,
+                    status = "SIPHON v${com.lonerxone.siphon.BuildConfig.VERSION_NAME}",
+                    statusColor = TextSecondary
+                ) {
                     Text(
                         text = "Credit: LONERXONE",
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp,
-                        color = PrimaryGradientStart
+                        color = TextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Build ${com.lonerxone.siphon.BuildConfig.VERSION_CODE}",
+                        fontSize = 12.sp,
+                        color = TextSecondary
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
@@ -334,13 +366,63 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun SectionTitle(text: String) {
-    Text(
-        text = text,
-        fontSize = 12.sp,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 1.sp,
-        color = TextSecondary
+private fun CollapsibleCard(
+    title: String,
+    icon: ImageVector,
+    iconTint: Color,
+    initiallyExpanded: Boolean,
+    status: String?,
+    statusColor: Color,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    var expanded by rememberSaveable(title) { mutableStateOf(initiallyExpanded) }
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        label = "chevron"
     )
-    Spacer(modifier = Modifier.height(8.dp))
+
+    SiphonCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { expanded = !expanded }
+                .padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextPrimary
+                )
+                if (status != null) {
+                    Text(text = status, fontSize = 12.sp, color = statusColor)
+                }
+            }
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowDown,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+                tint = TextSecondary,
+                modifier = Modifier.rotate(rotation)
+            )
+        }
+
+        AnimatedVisibility(visible = expanded) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 14.dp),
+                content = content
+            )
+        }
+    }
 }

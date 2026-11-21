@@ -7,14 +7,18 @@ import com.lonerxone.siphon.data.engine.model.DownloadRequest
 import com.lonerxone.siphon.data.engine.model.MediaFormat
 import com.lonerxone.siphon.data.engine.model.MediaMetadata
 import com.yausername.youtubedl_android.YoutubeDL
-import com.yausername.youtubedl_android.YoutubeDLException
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.net.HttpURLConnection
 import java.net.URI
+import java.net.URL
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -30,6 +34,12 @@ private data class Fmt(
     val size: Long
 )
 
+private class DirectSource(
+    val url: String,
+    val headers: Map<String, String>,
+    val fileName: String
+)
+
 private fun JSONObject.str(name: String): String {
     val s = optString(name, "")
     return if (s == "null") "" else s
@@ -42,23 +52,30 @@ class YtDlpEngine @Inject constructor(
 
     override val engineType: EngineType = EngineType.YT_DLP
 
-    private val activeProcesses = ConcurrentHashMap<String, String>() // downloadId to processId
+    private val activeProcesses = ConcurrentHashMap<String, String>()
+    private val directConnections = ConcurrentHashMap<String, HttpURLConnection>()
+    private val pausedIds = ConcurrentHashMap.newKeySet<String>()
+
+    // ---------------------------------------------------------------- metadata
 
     override suspend fun fetchMetadata(url: String): Result<MediaMetadata> = withContext(Dispatchers.IO) {
         try {
             val siteName = extractDomain(url)
-            val infoId = "info-" + System.nanoTime()
-            val request = YoutubeDLRequest(url).apply {
-                addOption("--dump-single-json")
-                addOption("--no-playlist")
-                addOption("--no-warnings")
+
+            // If the site changed and the engine can't read it, update the engine once and retry
+            val rawText = try {
+                runInfo(url)
+            } catch (e: Exception) {
+                if (isExtractorProblem(e.message) && tryEngineUpdate()) runInfo(url) else throw e
             }
 
-            val response = YoutubeDL.getInstance().execute(request = request, processId = infoId) { _, _, _ -> }
-            val text = response.out.trim()
-            val jsonStart = text.indexOf('{')
+            val jsonStart = rawText.indexOf('{')
             if (jsonStart < 0) throw IllegalStateException("No media information found for this link.")
-            val root = JSONObject(text.substring(jsonStart))
+            val jsonText = rawText.substring(jsonStart)
+            val root = JSONObject(jsonText)
+
+            // Keep the info so the download step does not need to extract the page again
+            saveInfoFile(url, jsonText)
 
             val title = root.str("title").ifBlank { "Media Download" }
             val thumbnail = root.str("thumbnail").ifBlank { null } ?: run {
@@ -105,6 +122,73 @@ class YtDlpEngine @Inject constructor(
         } catch (e: Exception) {
             Result.failure(Exception(parseErrorMessage(e), e))
         }
+    }
+
+    private fun runInfo(url: String): String {
+        val request = YoutubeDLRequest(url).apply {
+            addOption("--dump-single-json")
+            addOption("--no-playlist")
+            addOption("--no-warnings")
+            addOption("--socket-timeout", "20")
+            addOption("--force-ipv4")
+        }
+        val response = YoutubeDL.getInstance().execute(
+            request = request,
+            processId = "info-" + System.nanoTime()
+        ) { _, _, _ -> }
+        return response.out.trim()
+    }
+
+    private fun isExtractorProblem(message: String?): Boolean {
+        if (message == null) return false
+        return message.contains("Unable to extract", ignoreCase = true) ||
+            message.contains("ExtractorError", ignoreCase = true) ||
+            message.contains("yt-dlp -U", ignoreCase = true)
+    }
+
+    private fun tryEngineUpdate(): Boolean {
+        val prefs = context.getSharedPreferences("siphon_engine", Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        if (now - prefs.getLong("last_heal", 0L) < 15L * 60 * 1000) return false
+        prefs.edit().putLong("last_heal", now).apply()
+        return try {
+            val status = YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
+            if (status == YoutubeDL.UpdateStatus.DONE) {
+                prefs.edit().putLong("last_update", now).apply()
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun sha1(text: String): String {
+        val digest = MessageDigest.getInstance("SHA-1").digest(text.toByteArray())
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun infoDir(): File {
+        val dir = File(context.cacheDir, "info")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    private fun saveInfoFile(url: String, json: String) {
+        try {
+            val dir = infoDir()
+            val cutoff = System.currentTimeMillis() - 6L * 60 * 60 * 1000
+            dir.listFiles()?.forEach { if (it.lastModified() < cutoff) it.delete() }
+            File(dir, sha1(url) + ".json").writeText(json)
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun loadInfoFile(url: String): File? {
+        val file = File(infoDir(), sha1(url) + ".json")
+        val fresh = file.exists() && System.currentTimeMillis() - file.lastModified() < 3L * 60 * 60 * 1000
+        return if (fresh) file else null
     }
 
     private fun buildFormatOptions(root: JSONObject, durationSeconds: Long): List<MediaFormat> {
@@ -183,21 +267,23 @@ class YtDlpEngine @Inject constructor(
             options.add(
                 MediaFormat(
                     formatId = audioChoice.id,
-                    label = "Audio only",
+                    label = "Audio only (original)",
                     ext = audioExt,
                     fileSizeApprox = audioChoice.size,
                     isAudioOnly = true
                 )
             )
-            options.add(
-                MediaFormat(
-                    formatId = "audio:mp3",
-                    label = "Audio only (MP3)",
-                    ext = "mp3",
-                    fileSizeApprox = audioChoice.size,
-                    isAudioOnly = true
+            if (!audioExt.equals("mp3", ignoreCase = true)) {
+                options.add(
+                    MediaFormat(
+                        formatId = "audio:mp3",
+                        label = "Audio only (MP3)",
+                        ext = "mp3",
+                        fileSizeApprox = audioChoice.size,
+                        isAudioOnly = true
+                    )
                 )
-            )
+            }
         }
 
         return options
@@ -213,115 +299,312 @@ class YtDlpEngine @Inject constructor(
         else -> "${bucket}p"
     }
 
+    // ---------------------------------------------------------------- download
+
     override suspend fun startDownload(
         request: DownloadRequest,
         onProgress: (DownloadProgress) -> Unit
     ): Result<File> = withContext(Dispatchers.IO) {
-        val processId = request.id
-        activeProcesses[request.id] = processId
+        pausedIds.remove(request.id)
+        activeProcesses[request.id] = request.id
 
         try {
             if (!request.outputDir.exists()) {
                 request.outputDir.mkdirs()
             }
 
-            val ytdlRequest = YoutubeDLRequest(request.url).apply {
-                val outTemplate = File(request.outputDir, "%(title).100s [%(id)s].%(ext)s").absolutePath
-                addOption("-o", outTemplate)
+            val fid = request.formatId ?: "bv*+ba/b"
+            val infoFile = loadInfoFile(request.url)
 
-                addOption("--no-playlist")
-                addOption("-c")
-                addOption("--retries", "10")
-                addOption("--fragment-retries", "10")
-                addOption("--socket-timeout", "30")
-                addOption("--concurrent-fragments", "4")
-                addOption("--force-ipv4")
-                addOption("--add-metadata")
-                addOption("--no-mtime")
-
-                val fid = request.formatId ?: "bv*+ba/b"
-                if (fid == "audio:mp3") {
-                    addOption("-f", "bestaudio/best")
-                    addOption("-x")
-                    addOption("--audio-format", "mp3")
-                    addOption("--audio-quality", "0")
-                } else {
-                    val formatArg = if (fid.contains("/")) fid else fid + "/bv*+ba/b"
-                    addOption("-f", formatArg)
-                }
-
-                if (request.speedLimitKbps > 0) {
-                    addOption("-r", "${request.speedLimitKbps}K")
-                }
-            }
-
-            YoutubeDL.getInstance().execute(
-                request = ytdlRequest,
-                processId = processId
-            ) { progress, etaInSeconds, line ->
-                val eta = etaInSeconds.toLong()
-                val text = line ?: ""
-                fun toBytes(n: String, u: String): Long {
-                    val v = n.toDoubleOrNull() ?: return 0L
-                    val mul = when (u.uppercase().take(1)) {
-                        "K" -> 1024.0
-                        "M" -> 1024.0 * 1024.0
-                        "G" -> 1024.0 * 1024.0 * 1024.0
-                        "T" -> 1024.0 * 1024.0 * 1024.0 * 1024.0
-                        else -> 1.0
+            // Attempt 1: plain HTTP download of a direct file (fastest, no Python)
+            if (infoFile != null) {
+                val source = directSourceFor(infoFile, fid)
+                if (source != null) {
+                    try {
+                        val file = downloadDirect(request, source, onProgress)
+                        return@withContext Result.success(file)
+                    } catch (e: Exception) {
+                        if (pausedIds.contains(request.id)) {
+                            return@withContext Result.failure(Exception("Paused"))
+                        }
                     }
-                    return (v * mul).toLong()
                 }
-                val sizeMatch = Regex("""of\s+~?\s*([\d.]+)\s*([KMGT]?i?B)""").find(text)
-                val speedMatch = Regex("""at\s+([\d.]+)\s*([KMGT]?i?B)/s""").find(text)
-                val sizeBytes = sizeMatch?.let { toBytes(it.groupValues[1], it.groupValues[2]) } ?: 0L
-                val speedBytes = speedMatch?.let { toBytes(it.groupValues[1], it.groupValues[2]) } ?: 0L
-                onProgress(
-                    DownloadProgress(
-                        progressPercent = progress,
-                        bytesDownloaded = (sizeBytes * progress / 100.0).toLong(),
-                        totalBytes = sizeBytes,
-                        speedBps = speedBytes,
-                        etaSeconds = eta
-                    )
-                )
             }
 
-            val intermediate = Regex("""\.f[\w-]+\.\w+$""")
-            val files = request.outputDir.listFiles { file ->
-                file.isFile &&
-                    !file.name.endsWith(".part") &&
-                    !file.name.endsWith(".ytdl") &&
-                    !file.name.endsWith(".temp") &&
-                    !intermediate.containsMatchIn(file.name)
+            // Attempt 2: yt-dlp with the saved info and multi-connection aria2c
+            // Attempt 3: yt-dlp doing everything itself
+            val attempts = if (infoFile != null) listOf(infoFile, null) else listOf<File?>(null)
+            var lastError: Exception? = null
+            for (attemptInfo in attempts) {
+                try {
+                    val file = runYtDlp(request, fid, attemptInfo, onProgress)
+                    return@withContext Result.success(file)
+                } catch (e: Exception) {
+                    lastError = e
+                    if (pausedIds.contains(request.id)) break
+                }
             }
-            val resultFile = files?.maxByOrNull { it.lastModified() }
-                ?: throw IllegalStateException("Download finished but the output file was not found")
 
-            Result.success(resultFile)
-        } catch (e: YoutubeDLException) {
-            Result.failure(Exception(parseErrorMessage(e), e))
-        } catch (e: Exception) {
-            Result.failure(Exception(parseErrorMessage(e), e))
+            val error = lastError ?: IllegalStateException("Download failed")
+            Result.failure(Exception(parseErrorMessage(error), error))
         } finally {
             activeProcesses.remove(request.id)
+            directConnections.remove(request.id)
         }
     }
 
-    override suspend fun pause(id: String): Boolean = withContext(Dispatchers.IO) {
-        val processId = activeProcesses[id] ?: return@withContext false
-        try {
-            // Stops the process but leaves the partial file on disk so it can resume
-            YoutubeDL.getInstance().destroyProcessById(processId)
-            activeProcesses.remove(id)
-            true
+    private fun directSourceFor(infoFile: File, formatId: String): DirectSource? {
+        if (formatId.contains("+") || formatId.contains("/") || formatId.startsWith("audio:")) return null
+        return try {
+            val root = JSONObject(infoFile.readText())
+            if (root.str("extractor_key").lowercase().contains("youtube")) return null
+
+            var chosen: JSONObject? = null
+            val arr = root.optJSONArray("formats")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    if (o.str("format_id") == formatId) {
+                        chosen = o
+                        break
+                    }
+                }
+            }
+            val src: JSONObject = chosen ?: (if (formatId == "best") root else return null)
+
+            val mediaUrl = src.str("url")
+            val protocol = src.str("protocol").ifBlank { "https" }
+            if (!mediaUrl.startsWith("http")) return null
+            if (protocol != "https" && protocol != "http") return null
+            if (src.has("fragments")) return null
+
+            val headers = LinkedHashMap<String, String>()
+            val hdr = src.optJSONObject("http_headers") ?: root.optJSONObject("http_headers")
+            if (hdr != null) {
+                val keys = hdr.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next()
+                    headers[k] = hdr.optString(k)
+                }
+            }
+            val cookies = src.str("cookies")
+            if (cookies.isNotBlank()) headers["Cookie"] = cookies
+
+            val ext = src.str("ext").ifBlank { root.str("ext").ifBlank { "mp4" } }
+            val title = root.str("title").ifBlank { "download" }
+            val id = root.str("id")
+            val safeTitle = title.replace(Regex("""[\\/:*?"<>|\n\r]"""), "_").take(100).trim()
+            val name = if (id.isNotBlank()) "$safeTitle [$id].$ext" else "$safeTitle.$ext"
+            DirectSource(mediaUrl, headers, name)
         } catch (e: Exception) {
-            false
+            null
         }
+    }
+
+    private fun downloadDirect(
+        request: DownloadRequest,
+        source: DirectSource,
+        onProgress: (DownloadProgress) -> Unit
+    ): File {
+        val target = File(request.outputDir, source.fileName)
+        val part = File(request.outputDir, source.fileName + ".part")
+        var startAt = if (part.exists()) part.length() else 0L
+
+        val conn = (URL(source.url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 20000
+            readTimeout = 30000
+            instanceFollowRedirects = true
+            source.headers.forEach { (k, v) ->
+                if (!k.equals("Accept-Encoding", ignoreCase = true)) setRequestProperty(k, v)
+            }
+            setRequestProperty("Accept-Encoding", "identity")
+            if (startAt > 0L) setRequestProperty("Range", "bytes=$startAt-")
+        }
+        directConnections[request.id] = conn
+
+        try {
+            val code = conn.responseCode
+            if (code != 200 && code != 206) {
+                if (code == 416) part.delete()
+                throw IOException("HTTP $code")
+            }
+            val append = code == 206 && startAt > 0L
+            if (!append) startAt = 0L
+
+            val remaining = conn.contentLengthLong
+            val total = if (remaining > 0L) remaining + startAt else 0L
+            var done = startAt
+            var lastTick = System.currentTimeMillis()
+            var lastBytes = done
+
+            conn.inputStream.use { input ->
+                FileOutputStream(part, append).use { output ->
+                    val buffer = ByteArray(128 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        output.write(buffer, 0, read)
+                        done += read
+                        val now = System.currentTimeMillis()
+                        if (now - lastTick >= 500L) {
+                            val speed = ((done - lastBytes) * 1000L) / (now - lastTick)
+                            val pct = if (total > 0L) done * 100f / total else 0f
+                            val eta = if (speed > 0L && total > 0L) (total - done) / speed else 0L
+                            onProgress(
+                                DownloadProgress(
+                                    progressPercent = pct,
+                                    bytesDownloaded = done,
+                                    totalBytes = total,
+                                    speedBps = speed,
+                                    etaSeconds = eta
+                                )
+                            )
+                            lastTick = now
+                            lastBytes = done
+                        }
+                    }
+                }
+            }
+
+            if (total > 0L && done < total) throw IOException("Connection closed early")
+            if (target.exists()) target.delete()
+            if (!part.renameTo(target)) throw IOException("Could not finish the file")
+            onProgress(
+                DownloadProgress(
+                    progressPercent = 100f,
+                    bytesDownloaded = done,
+                    totalBytes = done,
+                    speedBps = 0L,
+                    etaSeconds = 0L
+                )
+            )
+            return target
+        } finally {
+            directConnections.remove(request.id)
+            conn.disconnect()
+        }
+    }
+
+    private fun runYtDlp(
+        request: DownloadRequest,
+        fid: String,
+        infoFile: File?,
+        onProgress: (DownloadProgress) -> Unit
+    ): File {
+        val ytdlRequest = if (infoFile != null) {
+            YoutubeDLRequest(emptyList())
+        } else {
+            YoutubeDLRequest(request.url)
+        }
+
+        ytdlRequest.apply {
+            if (infoFile != null) {
+                addOption("--load-info-json", infoFile.absolutePath)
+                addOption("--downloader", "libaria2c.so")
+                addOption("--external-downloader-args", "aria2c:-x 8 -s 8 -k 1M --file-allocation=none")
+            }
+
+            val outTemplate = File(request.outputDir, "%(title).100s [%(id)s].%(ext)s").absolutePath
+            addOption("-o", outTemplate)
+
+            addOption("--no-playlist")
+            addOption("-c")
+            addOption("--retries", "10")
+            addOption("--fragment-retries", "10")
+            addOption("--socket-timeout", "30")
+            addOption("--concurrent-fragments", "8")
+            addOption("--force-ipv4")
+            addOption("--add-metadata")
+            addOption("--no-mtime")
+
+            if (fid == "audio:mp3") {
+                addOption("-f", "bestaudio/best")
+                addOption("-x")
+                addOption("--audio-format", "mp3")
+                addOption("--audio-quality", "0")
+            } else {
+                val formatArg = if (fid.contains("/")) fid else fid + "/bv*+ba/b"
+                addOption("-f", formatArg)
+            }
+
+            if (request.speedLimitKbps > 0) {
+                addOption("-r", "${request.speedLimitKbps}K")
+            }
+        }
+
+        YoutubeDL.getInstance().execute(
+            request = ytdlRequest,
+            processId = request.id
+        ) { progress, etaInSeconds, line ->
+            val eta = etaInSeconds.toLong()
+            val text = line ?: ""
+            fun toBytes(n: String, u: String): Long {
+                val v = n.toDoubleOrNull() ?: return 0L
+                val mul = when (u.uppercase().take(1)) {
+                    "K" -> 1024.0
+                    "M" -> 1024.0 * 1024.0
+                    "G" -> 1024.0 * 1024.0 * 1024.0
+                    "T" -> 1024.0 * 1024.0 * 1024.0 * 1024.0
+                    else -> 1.0
+                }
+                return (v * mul).toLong()
+            }
+            val sizeMatch = Regex("""of\s+~?\s*([\d.]+)\s*([KMGT]?i?B)""").find(text)
+            val speedMatch = Regex("""at\s+([\d.]+)\s*([KMGT]?i?B)/s""").find(text)
+            val ariaMatch = Regex("""([\d.]+)([KMGT]?i?B)/([\d.]+)([KMGT]?i?B)\((\d+)%\).*?DL:([\d.]+)([KMGT]?i?B)""").find(text)
+
+            var sizeBytes = sizeMatch?.let { toBytes(it.groupValues[1], it.groupValues[2]) } ?: 0L
+            var speedBytes = speedMatch?.let { toBytes(it.groupValues[1], it.groupValues[2]) } ?: 0L
+            if (ariaMatch != null) {
+                sizeBytes = toBytes(ariaMatch.groupValues[3], ariaMatch.groupValues[4])
+                speedBytes = toBytes(ariaMatch.groupValues[6], ariaMatch.groupValues[7])
+            }
+
+            onProgress(
+                DownloadProgress(
+                    progressPercent = progress,
+                    bytesDownloaded = (sizeBytes * progress / 100.0).toLong(),
+                    totalBytes = sizeBytes,
+                    speedBps = speedBytes,
+                    etaSeconds = eta
+                )
+            )
+        }
+
+        val intermediate = Regex("""\.f[\w-]+\.\w+$""")
+        val files = request.outputDir.listFiles { file ->
+            file.isFile &&
+                !file.name.endsWith(".part") &&
+                !file.name.endsWith(".ytdl") &&
+                !file.name.endsWith(".temp") &&
+                !file.name.endsWith(".aria2") &&
+                !intermediate.containsMatchIn(file.name)
+        }
+        return files?.maxByOrNull { it.lastModified() }
+            ?: throw IllegalStateException("Download finished but the output file was not found")
+    }
+
+    // ---------------------------------------------------------------- control
+
+    override suspend fun pause(id: String): Boolean = withContext(Dispatchers.IO) {
+        if (!activeProcesses.containsKey(id)) return@withContext false
+        pausedIds.add(id)
+        directConnections[id]?.let {
+            try {
+                it.disconnect()
+            } catch (e: Exception) {
+            }
+        }
+        try {
+            // Stops the process but leaves the partial file so it can resume
+            YoutubeDL.getInstance().destroyProcessById(id)
+        } catch (e: Exception) {
+        }
+        true
     }
 
     override suspend fun resume(id: String): Boolean {
-        // Resume is done by starting the download again; yt-dlp continues from the partial file
+        // Resume = start again; partial files are continued
         return true
     }
 
@@ -342,9 +625,17 @@ class YtDlpEngine @Inject constructor(
     private fun parseErrorMessage(e: Throwable): String {
         val msg = e.message ?: return "Download failed. Please check the link."
         return when {
+            msg.contains("Unable to download webpage", ignoreCase = true) ||
+                msg.contains("Temporary failure in name resolution", ignoreCase = true) ||
+                msg.contains("timed out", ignoreCase = true) ||
+                msg.contains("Network is unreachable", ignoreCase = true) ->
+                "Network problem. Check your connection and try again."
+            msg.contains("Unable to extract", ignoreCase = true) ||
+                msg.contains("ExtractorError", ignoreCase = true) ->
+                "This site changed how it serves videos. SIPHON tried updating its engine. Try the link again in a few minutes."
             msg.contains("Sign in to confirm", ignoreCase = true) ||
-                msg.contains("bot", ignoreCase = true) ->
-                "This site requires a login or bot check."
+                msg.contains("not a bot", ignoreCase = true) ->
+                "This site wants a login or a bot check."
             msg.contains("HTTP Error 404", ignoreCase = true) ||
                 msg.contains("404 Not Found", ignoreCase = true) ->
                 "Link expired or the content was removed (404)."
@@ -352,8 +643,7 @@ class YtDlpEngine @Inject constructor(
                 "Access denied (403). The link may have expired."
             msg.contains("No space left on device", ignoreCase = true) ->
                 "Not enough free storage space."
-            msg.contains("ExtractorError", ignoreCase = true) ||
-                msg.contains("Unsupported URL", ignoreCase = true) ->
+            msg.contains("Unsupported URL", ignoreCase = true) ->
                 "This site isn't supported yet. Try updating the engine in Settings."
             else -> msg
         }

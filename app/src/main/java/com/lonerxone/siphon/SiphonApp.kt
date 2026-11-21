@@ -13,6 +13,7 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.lonerxone.siphon.data.db.dao.DownloadDao
 import com.lonerxone.siphon.data.repository.WaitlistScheduler
+import com.yausername.aria2c.Aria2c
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import dagger.hilt.android.HiltAndroidApp
@@ -62,6 +63,7 @@ class SiphonApp : Application(), ImageLoaderFactory {
         try {
             YoutubeDL.getInstance().init(this)
             FFmpeg.getInstance().init(this)
+            Aria2c.getInstance().init(this)
         } catch (e: Exception) {
             Log.e("SiphonApp", "Failed to initialize native download engines", e)
         }
