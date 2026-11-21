@@ -51,6 +51,7 @@ import com.lonerxone.siphon.ui.theme.DarkBackground
 import com.lonerxone.siphon.ui.theme.DarkBorder
 import com.lonerxone.siphon.ui.theme.DarkElevated
 import com.lonerxone.siphon.ui.theme.DarkSurface
+import com.lonerxone.siphon.ui.theme.OnAccent
 import com.lonerxone.siphon.ui.theme.PrimaryGradientStart
 import com.lonerxone.siphon.ui.theme.TextMuted
 import com.lonerxone.siphon.ui.theme.TextPrimary
@@ -219,7 +220,7 @@ fun FilterPill(
             text = label,
             fontSize = 12.sp,
             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-            color = if (isSelected) Color.White else TextSecondary
+            color = if (isSelected) OnAccent else TextSecondary
         )
     }
 }

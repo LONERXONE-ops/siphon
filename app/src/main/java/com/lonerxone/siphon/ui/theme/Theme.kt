@@ -16,9 +16,9 @@ import androidx.core.view.WindowCompat
 
 private val DarkColorScheme = darkColorScheme(
     primary = PrimaryGradientStart,
-    onPrimary = Color.White,
+    onPrimary = OnAccent,
     secondary = PrimaryGradientEnd,
-    onSecondary = Color.White,
+    onSecondary = OnAccent,
     tertiary = AccentSuccess,
     background = DarkBackground,
     onBackground = TextPrimary,

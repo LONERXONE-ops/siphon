@@ -2,6 +2,10 @@ package com.lonerxone.siphon.ui.home
 
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Download
@@ -43,7 +48,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -56,11 +60,14 @@ import com.lonerxone.siphon.data.db.entity.DownloadItem
 import com.lonerxone.siphon.ui.components.MediaThumbnail
 import com.lonerxone.siphon.ui.components.SiphonCard
 import com.lonerxone.siphon.ui.components.SiphonPrimaryButton
+import com.lonerxone.siphon.ui.components.SiphonSecondaryButton
 import com.lonerxone.siphon.ui.components.describeSaveLocation
 import com.lonerxone.siphon.ui.components.formatFileSize
 import com.lonerxone.siphon.ui.components.openMedia
 import com.lonerxone.siphon.ui.home.components.ActiveDownloadCard
 import com.lonerxone.siphon.ui.home.components.AddLinkBottomSheet
+import com.lonerxone.siphon.ui.theme.AccentError
+import com.lonerxone.siphon.ui.theme.AccentWarning
 import com.lonerxone.siphon.ui.theme.DarkBackground
 import com.lonerxone.siphon.ui.theme.DarkBorder
 import com.lonerxone.siphon.ui.theme.DarkElevated
@@ -76,14 +83,20 @@ fun HomeScreen(
     sharedUrl: String? = null
 ) {
     val activeDownloads by viewModel.activeDownloads.collectAsState()
+    val failedDownloads by viewModel.failedDownloads.collectAsState()
     val recentCompleted by viewModel.recentCompleted.collectAsState()
     val addSheetState by viewModel.addSheetState.collectAsState()
+    val engineUpdating by viewModel.engineUpdating.collectAsState()
     val context = LocalContext.current
 
     var urlInput by remember { mutableStateOf("") }
     var clipboardUrl by remember { mutableStateOf<String?>(null) }
+    var batteryCardDismissed by remember { mutableStateOf(false) }
 
-    // Foreground clipboard detection
+    val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+    val showBatteryCard = !batteryCardDismissed &&
+        !powerManager.isIgnoringBatteryOptimizations(context.packageName)
+
     LaunchedEffect(Unit) {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clipData = clipboard.primaryClip
@@ -95,7 +108,6 @@ fun HomeScreen(
         }
     }
 
-    // Auto-trigger if shared from another app
     LaunchedEffect(sharedUrl) {
         if (!sharedUrl.isNullOrBlank()) {
             urlInput = sharedUrl
@@ -151,6 +163,23 @@ fun HomeScreen(
                     }
                 )
 
+                if (showBatteryCard) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    BackgroundAccessCard(
+                        onAllow = {
+                            try {
+                                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                    data = Uri.parse("package:${context.packageName}")
+                                }
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                            }
+                            batteryCardDismissed = true
+                        },
+                        onDismiss = { batteryCardDismissed = true }
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(30.dp))
                 SectionHeader(title = "Downloading", count = activeDownloads.size)
                 Spacer(modifier = Modifier.height(12.dp))
@@ -171,6 +200,24 @@ fun HomeScreen(
                         onPause = { viewModel.pauseDownload(it) },
                         onResume = { viewModel.resumeDownload(it) },
                         onCancel = { viewModel.cancelDownload(it) }
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+            }
+
+            if (failedDownloads.isNotEmpty()) {
+                item {
+                    Spacer(modifier = Modifier.height(18.dp))
+                    SectionHeader(title = "Needs attention", count = failedDownloads.size)
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+                items(failedDownloads, key = { "failed-" + it.id }) { item ->
+                    FailedDownloadCard(
+                        item = item,
+                        engineUpdating = engineUpdating,
+                        onRetry = { viewModel.retryDownload(item.id) },
+                        onRemove = { viewModel.cancelDownload(item.id) },
+                        onUpdateEngine = { viewModel.updateEngine() }
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                 }
@@ -259,10 +306,11 @@ private fun LinkInputCard(
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = DarkBackground,
                 unfocusedContainerColor = DarkBackground,
-                focusedBorderColor = PrimaryGradientStart,
+                focusedBorderColor = TextSecondary,
                 unfocusedBorderColor = DarkBorder,
                 focusedTextColor = TextPrimary,
-                unfocusedTextColor = TextPrimary
+                unfocusedTextColor = TextPrimary,
+                cursorColor = TextPrimary
             ),
             trailingIcon = {
                 IconButton(
@@ -296,7 +344,7 @@ private fun LinkInputCard(
                 Icon(
                     imageVector = Icons.Default.ContentPaste,
                     contentDescription = null,
-                    tint = PrimaryGradientStart,
+                    tint = TextPrimary,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(10.dp))
@@ -314,7 +362,7 @@ private fun LinkInputCard(
                     text = "USE",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = PrimaryGradientStart
+                    color = TextPrimary
                 )
             }
         }
@@ -326,6 +374,47 @@ private fun LinkInputCard(
             onClick = onInspect,
             modifier = Modifier.fillMaxWidth()
         )
+    }
+}
+
+@Composable
+private fun BackgroundAccessCard(onAllow: () -> Unit, onDismiss: () -> Unit) {
+    SiphonCard(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Default.BatteryAlert,
+                contentDescription = null,
+                tint = AccentWarning,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Keep downloads running",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextPrimary
+                )
+                Text(
+                    text = "Allow SIPHON to work in the background so Wi-Fi downloads can start on their own.",
+                    fontSize = 12.sp,
+                    color = TextSecondary
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SiphonPrimaryButton(
+                text = "Allow",
+                onClick = onAllow,
+                modifier = Modifier.weight(1f)
+            )
+            SiphonSecondaryButton(
+                text = "Not now",
+                onClick = onDismiss,
+                modifier = Modifier.weight(1f)
+            )
+        }
     }
 }
 
@@ -343,14 +432,14 @@ private fun SectionHeader(title: String, count: Int?) {
             Box(
                 modifier = Modifier
                     .clip(CircleShape)
-                    .background(PrimaryGradientStart.copy(alpha = 0.18f))
+                    .background(DarkElevated)
                     .padding(horizontal = 8.dp, vertical = 2.dp)
             ) {
                 Text(
                     text = "$count",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = PrimaryGradientStart
+                    color = TextPrimary
                 )
             }
         }
@@ -384,6 +473,75 @@ private fun EmptyStateCard(icon: ImageVector, title: String, subtitle: String) {
             Text(text = title, color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
             Spacer(modifier = Modifier.height(4.dp))
             Text(text = subtitle, color = TextSecondary, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+private fun FailedDownloadCard(
+    item: DownloadItem,
+    engineUpdating: Boolean,
+    onRetry: () -> Unit,
+    onRemove: () -> Unit,
+    onUpdateEngine: () -> Unit
+) {
+    val message = item.errorMessage?.takeIf { it.isNotBlank() } ?: "Something went wrong."
+    val engineRelated = message.contains("engine", ignoreCase = true) ||
+        message.contains("isn't supported", ignoreCase = true)
+
+    SiphonCard(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            MediaThumbnail(
+                item = item,
+                modifier = Modifier
+                    .size(width = 96.dp, height = 60.dp)
+                    .clip(RoundedCornerShape(12.dp))
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = item.title,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                    color = TextPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = message,
+                    fontSize = 12.sp,
+                    color = AccentError,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            SiphonPrimaryButton(
+                text = "Retry",
+                onClick = onRetry,
+                modifier = Modifier.weight(1f)
+            )
+            if (engineRelated) {
+                SiphonSecondaryButton(
+                    text = if (engineUpdating) "Updating..." else "Update engine",
+                    onClick = onUpdateEngine,
+                    enabled = !engineUpdating,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            SiphonSecondaryButton(
+                text = "Remove",
+                onClick = onRemove,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
@@ -447,7 +605,7 @@ fun RecentCompletedRow(item: DownloadItem) {
                     Icon(
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = "Open",
-                        tint = Color.White,
+                        tint = TextPrimary,
                         modifier = Modifier.size(20.dp)
                     )
                 }

@@ -60,6 +60,7 @@ import com.lonerxone.siphon.ui.theme.AccentWarning
 import com.lonerxone.siphon.ui.theme.DarkBorder
 import com.lonerxone.siphon.ui.theme.DarkElevated
 import com.lonerxone.siphon.ui.theme.DarkSurface
+import com.lonerxone.siphon.ui.theme.OnAccent
 import com.lonerxone.siphon.ui.theme.PrimaryGradientStart
 import com.lonerxone.siphon.ui.theme.TextMuted
 import com.lonerxone.siphon.ui.theme.TextPrimary
@@ -377,7 +378,7 @@ private fun QualityRow(
                     Icon(
                         imageVector = Icons.Default.Check,
                         contentDescription = null,
-                        tint = Color.White,
+                        tint = OnAccent,
                         modifier = Modifier.size(14.dp)
                     )
                 }

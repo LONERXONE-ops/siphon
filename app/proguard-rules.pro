@@ -1,16 +1,13 @@
-# Room
--keep class * extends androidx.room.RoomDatabase
--dontwarn androidx.room.paging.**
+# yt-dlp / ffmpeg wrapper library and its JSON mapper
+-keep class com.yausername.** { *; }
+-keep class com.fasterxml.jackson.** { *; }
+-dontwarn com.fasterxml.jackson.**
+-keep class org.apache.commons.io.** { *; }
+-dontwarn org.apache.commons.io.**
 
-# youtubedl-android
--keep class com.yausername.youtubedl_android.** { *; }
--keepclassmembers class * {
-    native <methods>;
-}
+# our own data layer (Room entities, engine models)
+-keep class com.lonerxone.siphon.data.** { *; }
 
-# Kotlin Coroutines
--keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
--keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
-
-# Media3 ExoPlayer
--keep class androidx.media3.exoplayer.** { *; }
+-keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod
+-dontobfuscate
+-ignorewarnings

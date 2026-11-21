@@ -85,7 +85,7 @@ class DownloadRepositoryImpl @Inject constructor(
             val reqMb = storageCheck.requiredBytes / (1024 * 1024)
             val freeMb = storageCheck.freeBytes / (1024 * 1024)
             return@withContext Result.failure(
-                IllegalStateException("Not enough free space on SD card. Needs ${reqMb}MB (2x file size). Available: ${freeMb}MB")
+                IllegalStateException("Not enough free storage. Needs about ${reqMb}MB but only ${freeMb}MB is available.")
             )
         }
 
@@ -243,7 +243,7 @@ class DownloadRepositoryImpl @Inject constructor(
     override suspend fun updateEngine(): Result<String> = withContext(Dispatchers.IO) {
         try {
             // Uses youtubedl-android built-in yt-dlp binary update
-            val status = YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.STABLE)
+            val status = YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.NIGHTLY)
             Result.success("yt-dlp engine updated successfully: $status")
         } catch (e: Exception) {
             Result.failure(Exception("Failed to update yt-dlp: ${e.message}", e))
@@ -263,6 +263,18 @@ class DownloadRepositoryImpl @Inject constructor(
             action = DownloadService.ACTION_START_DOWNLOAD
             putExtra(DownloadService.EXTRA_DOWNLOAD_ID, downloadId)
         }
-        context.startForegroundService(intent)
+        try {
+            context.startForegroundService(intent)
+        } catch (e: Exception) {
+            // Android can block starting a download service from the background
+            CoroutineScope(Dispatchers.IO).launch {
+                downloadDao.updateStatus(
+                    downloadId,
+                    DownloadStatus.WAITING,
+                    pausedByUser = false,
+                    errorMessage = "Could not start in the background. Open SIPHON to continue."
+                )
+            }
+        }
     }
 }

@@ -20,8 +20,8 @@
     <string name="action_cancel">Cancel</string>
 
     <!-- Storage Setup -->
-    <string name="storage_setup_title">Choose SD Card Folder</string>
-    <string name="storage_setup_desc">Select a folder on your SD card where Siphon will save completed files.</string>
+    <string name="storage_setup_title">Choose a folder</string>
+    <string name="storage_setup_desc">Select a folder where SIPHON will save completed files.</string>
     <string name="select_folder_btn">Select Folder</string>
 
     <!-- Dialogs -->

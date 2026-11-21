@@ -65,7 +65,7 @@ class WaitlistScheduler @Inject constructor(
                                 id = item.id,
                                 status = DownloadStatus.PAUSED_NO_STORAGE,
                                 pausedByUser = false,
-                                errorMessage = "Need ${mbReq}MB free on SD card (2x file size). Only ${mbFree}MB available."
+                                errorMessage = "Need about ${mbReq}MB of free storage. Only ${mbFree}MB available."
                             )
                         }
                         is StorageStatus.NoSdCardDetected -> {
@@ -73,7 +73,7 @@ class WaitlistScheduler @Inject constructor(
                                 id = item.id,
                                 status = DownloadStatus.PAUSED_NO_STORAGE,
                                 pausedByUser = false,
-                                errorMessage = "No SD card detected. Insert SD card or select internal storage."
+                                errorMessage = "Storage is not available right now."
                             )
                         }
                         is StorageStatus.Ok -> {

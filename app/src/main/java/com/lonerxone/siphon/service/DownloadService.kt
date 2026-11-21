@@ -104,7 +104,11 @@ class DownloadService : Service() {
                 speedLimitKbps = prefs.speedLimitKbps
             )
 
+            var lastProgressAt = 0L
             val downloadResult = engine.startDownload(request) { progress ->
+                val nowMs = System.currentTimeMillis()
+                if (nowMs - lastProgressAt < 900L && progress.progressPercent < 99.5f) return@startDownload
+                lastProgressAt = nowMs
                 serviceScope.launch {
                     downloadDao.updateProgress(
                         id = item.id,

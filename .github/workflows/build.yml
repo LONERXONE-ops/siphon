@@ -29,17 +29,17 @@ jobs:
         if: steps.ks.outputs.cache-hit != 'true'
         run: keytool -genkeypair -v -keystore app/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
       - name: Build debug APK
-        run: gradle assembleDebug --stacktrace -PbuildNumber=${{ github.run_number }}
+        run: gradle assembleRelease --stacktrace -PbuildNumber=${{ github.run_number }}
       - uses: actions/upload-artifact@v4
         with:
           name: siphon-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/release/*.apk
       - name: Publish latest release
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk siphon-${{ github.run_number }}.apk
+          cp app/build/outputs/apk/release/app-release.apk siphon-${{ github.run_number }}.apk
           gh release delete latest --yes --cleanup-tag || true
           gh release create latest siphon-${{ github.run_number }}.apk --title "SIPHON build ${{ github.run_number }}" --notes "Automated build ${{ github.run_number }}" --target ${{ github.sha }}

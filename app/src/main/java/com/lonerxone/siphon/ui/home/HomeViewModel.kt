@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lonerxone.siphon.data.datastore.UserPreferencesRepository
 import com.lonerxone.siphon.data.db.entity.DownloadItem
+import com.lonerxone.siphon.data.db.entity.DownloadStatus
 import com.lonerxone.siphon.data.engine.model.MediaMetadata
 import com.lonerxone.siphon.data.network.NetworkMonitor
 import com.lonerxone.siphon.data.network.NetworkState
@@ -13,7 +14,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -33,7 +36,26 @@ class HomeViewModel @Inject constructor(
     private val preferencesRepository: UserPreferencesRepository
 ) : ViewModel() {
 
-    val activeDownloads: StateFlow<List<DownloadItem>> = repository.activeDownloads
+    /**
+     * Everything the user has actively started: running downloads plus
+     * started downloads that are paused (so Pause keeps the item on Home).
+     */
+    val activeDownloads: StateFlow<List<DownloadItem>> = combine(
+        repository.activeDownloads,
+        repository.waitlistDownloads
+    ) { active, waiting ->
+        val startedPaused = waiting.filter {
+            it.progress > 0f && (
+                it.status == DownloadStatus.PAUSED_BY_USER ||
+                    it.status == DownloadStatus.PAUSED_NO_WIFI ||
+                    it.status == DownloadStatus.PAUSED_NO_STORAGE
+                )
+        }
+        (active + startedPaused).sortedBy { it.position }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val failedDownloads: StateFlow<List<DownloadItem>> = repository.allDownloads
+        .map { list -> list.filter { it.status == DownloadStatus.FAILED } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val recentCompleted: StateFlow<List<DownloadItem>> = repository.recentCompleted
@@ -44,6 +66,9 @@ class HomeViewModel @Inject constructor(
 
     private val _addSheetState = MutableStateFlow<AddSheetUiState>(AddSheetUiState.Idle)
     val addSheetState: StateFlow<AddSheetUiState> = _addSheetState.asStateFlow()
+
+    private val _engineUpdating = MutableStateFlow(false)
+    val engineUpdating: StateFlow<Boolean> = _engineUpdating.asStateFlow()
 
     fun fetchLinkInfo(url: String) {
         if (url.isBlank()) return
@@ -71,7 +96,6 @@ class HomeViewModel @Inject constructor(
             val prefs = preferencesRepository.userPreferencesFlow.first()
             val autoAllowSize = prefs.autoAllowMobileDataMb?.let { it * 1024 * 1024 }
 
-            // If on mobile data and not auto-allowed, prompt user (PRD 5.2)
             if (!netState.isWifi && (autoAllowSize == null || size > autoAllowSize)) {
                 _addSheetState.value = AddSheetUiState.MobileDataWarning(
                     metadata = metadata,
@@ -91,13 +115,17 @@ class HomeViewModel @Inject constructor(
 
     fun downloadLater(metadata: MediaMetadata, formatId: String?, formatLabel: String?) {
         viewModelScope.launch {
-            repository.downloadLater(
-                url = metadata.url,
-                metadata = metadata,
-                formatId = formatId,
-                formatLabel = formatLabel
-            )
-            _addSheetState.value = AddSheetUiState.Idle
+            try {
+                repository.downloadLater(
+                    url = metadata.url,
+                    metadata = metadata,
+                    formatId = formatId,
+                    formatLabel = formatLabel
+                )
+                _addSheetState.value = AddSheetUiState.Idle
+            } catch (e: Exception) {
+                _addSheetState.value = AddSheetUiState.Error(e.message ?: "Could not add to the waitlist")
+            }
         }
     }
 
@@ -108,14 +136,24 @@ class HomeViewModel @Inject constructor(
         mobileApproved: Boolean
     ) {
         viewModelScope.launch {
-            repository.downloadNow(
-                url = metadata.url,
-                metadata = metadata,
-                formatId = formatId,
-                formatLabel = formatLabel,
-                mobileDataApproved = mobileApproved
-            )
-            _addSheetState.value = AddSheetUiState.Idle
+            try {
+                val result = repository.downloadNow(
+                    url = metadata.url,
+                    metadata = metadata,
+                    formatId = formatId,
+                    formatLabel = formatLabel,
+                    mobileDataApproved = mobileApproved
+                )
+                if (result.isSuccess) {
+                    _addSheetState.value = AddSheetUiState.Idle
+                } else {
+                    _addSheetState.value = AddSheetUiState.Error(
+                        result.exceptionOrNull()?.message ?: "Could not start the download"
+                    )
+                }
+            } catch (e: Exception) {
+                _addSheetState.value = AddSheetUiState.Error(e.message ?: "Could not start the download")
+            }
         }
     }
 
@@ -129,6 +167,21 @@ class HomeViewModel @Inject constructor(
 
     fun cancelDownload(id: String) {
         viewModelScope.launch { repository.cancelDownload(id) }
+    }
+
+    fun retryDownload(id: String) {
+        viewModelScope.launch { repository.resumeDownload(id) }
+    }
+
+    fun updateEngine() {
+        viewModelScope.launch {
+            _engineUpdating.value = true
+            try {
+                repository.updateEngine()
+            } finally {
+                _engineUpdating.value = false
+            }
+        }
     }
 
     fun dismissSheet() {

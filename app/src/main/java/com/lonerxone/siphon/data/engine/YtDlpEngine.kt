@@ -61,7 +61,20 @@ class YtDlpEngine @Inject constructor(
             val root = JSONObject(text.substring(jsonStart))
 
             val title = root.str("title").ifBlank { "Media Download" }
-            val thumbnail = root.str("thumbnail").ifBlank { null }
+            val thumbnail = root.str("thumbnail").ifBlank { null } ?: run {
+                val thumbs = root.optJSONArray("thumbnails")
+                var picked: String? = null
+                if (thumbs != null) {
+                    for (i in thumbs.length() - 1 downTo 0) {
+                        val u = thumbs.optJSONObject(i)?.str("url") ?: ""
+                        if (u.startsWith("http")) {
+                            picked = u
+                            break
+                        }
+                    }
+                }
+                picked
+            }
             val durationRaw = root.optDouble("duration", 0.0)
             val duration = if (durationRaw.isNaN()) 0L else durationRaw.toLong()
             val rootExt = root.str("ext").ifBlank { "mp4" }
@@ -218,6 +231,11 @@ class YtDlpEngine @Inject constructor(
 
                 addOption("--no-playlist")
                 addOption("-c")
+                addOption("--retries", "10")
+                addOption("--fragment-retries", "10")
+                addOption("--socket-timeout", "30")
+                addOption("--concurrent-fragments", "4")
+                addOption("--force-ipv4")
                 addOption("--add-metadata")
                 addOption("--no-mtime")
 

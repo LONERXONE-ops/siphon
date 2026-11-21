@@ -113,7 +113,7 @@ class UpdateViewModel @Inject constructor(
                     _state.value = UpdateUiState.UpToDate(BuildConfig.VERSION_CODE)
                 }
             } catch (e: Exception) {
-                _state.value = UpdateUiState.Error(e.message ?: "Could not check for updates")
+                _state.value = UpdateUiState.Error(describe("Could not check for updates", e))
             }
         }
     }
@@ -124,55 +124,87 @@ class UpdateViewModel @Inject constructor(
         viewModelScope.launch {
             _state.value = UpdateUiState.Downloading(0)
             try {
-                val file = withContext(Dispatchers.IO) {
-                    val dir = File(context.cacheDir, "update")
-                    dir.deleteRecursively()
-                    dir.mkdirs()
-                    val target = File(dir, "siphon-${available.buildNumber}.apk")
-
-                    val conn = (URL(available.url).openConnection() as HttpURLConnection).apply {
-                        connectTimeout = 15000
-                        readTimeout = 30000
-                        instanceFollowRedirects = true
-                        setRequestProperty("User-Agent", "SIPHON-Updater")
-                    }
-                    try {
-                        if (conn.responseCode !in 200..299) {
-                            throw IllegalStateException("Download failed (HTTP ${conn.responseCode})")
-                        }
-                        val total = if (conn.contentLengthLong > 0) conn.contentLengthLong else available.sizeBytes
-                        conn.inputStream.use { input ->
-                            target.outputStream().use { output ->
-                                val buffer = ByteArray(64 * 1024)
-                                var done = 0L
-                                var lastPercent = -1
-                                while (true) {
-                                    val read = input.read(buffer)
-                                    if (read == -1) break
-                                    output.write(buffer, 0, read)
-                                    done += read
-                                    val percent = if (total > 0) ((done * 100) / total).toInt() else 0
-                                    if (percent != lastPercent) {
-                                        lastPercent = percent
-                                        _state.value = UpdateUiState.Downloading(percent)
-                                    }
-                                }
-                            }
-                        }
-                    } finally {
-                        conn.disconnect()
-                    }
-
-                    if (available.sizeBytes > 0 && target.length() != available.sizeBytes) {
-                        throw IllegalStateException("Downloaded file is incomplete. Try again.")
-                    }
-                    target
-                }
+                val file = withContext(Dispatchers.IO) { downloadApk(available) }
                 _state.value = UpdateUiState.ReadyToInstall(file.absolutePath)
             } catch (e: Exception) {
-                _state.value = UpdateUiState.Error(e.message ?: "Download failed")
+                _state.value = UpdateUiState.Error(describe("Download failed", e))
             }
         }
+    }
+
+    private fun describe(prefix: String, e: Exception): String {
+        val detail = e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName
+        return "$prefix: $detail"
+    }
+
+    private fun openWithRedirects(startUrl: String): HttpURLConnection {
+        var url = startUrl
+        repeat(6) {
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 20000
+                readTimeout = 45000
+                instanceFollowRedirects = false
+                setRequestProperty("User-Agent", "SIPHON-Updater")
+                setRequestProperty("Accept-Encoding", "identity")
+                setRequestProperty("Accept", "application/octet-stream")
+            }
+            val code = conn.responseCode
+            if (code in 300..399) {
+                val location = conn.getHeaderField("Location")
+                conn.disconnect()
+                if (location.isNullOrBlank()) throw IllegalStateException("Redirect without a location")
+                url = URL(URL(url), location).toString()
+            } else if (code in 200..299) {
+                return conn
+            } else {
+                conn.disconnect()
+                throw IllegalStateException("HTTP $code")
+            }
+        }
+        throw IllegalStateException("Too many redirects")
+    }
+
+    private fun downloadApk(available: UpdateUiState.Available): File {
+        val dir = File(context.cacheDir, "update")
+        dir.deleteRecursively()
+        dir.mkdirs()
+        val target = File(dir, "siphon-${available.buildNumber}.apk")
+
+        val conn = openWithRedirects(available.url)
+        try {
+            val total = if (conn.contentLengthLong > 0) conn.contentLengthLong else available.sizeBytes
+            conn.inputStream.use { input ->
+                target.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    var done = 0L
+                    var lastPercent = -1
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        output.write(buffer, 0, read)
+                        done += read
+                        val percent = if (total > 0) ((done * 100) / total).toInt().coerceIn(0, 100) else 0
+                        if (percent != lastPercent) {
+                            lastPercent = percent
+                            _state.value = UpdateUiState.Downloading(percent)
+                        }
+                    }
+                    output.flush()
+                }
+            }
+        } finally {
+            conn.disconnect()
+        }
+
+        if (target.length() < 1_000_000L) {
+            throw IllegalStateException("The downloaded file is too small to be the app")
+        }
+        val info = context.packageManager.getPackageArchiveInfo(target.absolutePath, 0)
+            ?: throw IllegalStateException("The downloaded file is not a valid app package")
+        if (info.packageName != context.packageName) {
+            throw IllegalStateException("The downloaded file belongs to a different app")
+        }
+        return target
     }
 
     fun installUpdate(path: String) {
@@ -192,14 +224,28 @@ class UpdateViewModel @Inject constructor(
             return
         }
 
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        val intent = Intent(Intent.ACTION_VIEW)
-            .setDataAndType(uri, "application/vnd.android.package-archive")
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
+        try {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            val intent = Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            _state.value = UpdateUiState.Error(describe("Could not open the installer", e))
+        }
+    }
+
+    fun openReleasePage() {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(RELEASE_PAGE))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        } catch (e: Exception) {
+        }
     }
 
     private companion object {
         const val RELEASE_URL = "https://api.github.com/repos/LONERXONE-ops/siphon/releases/tags/latest"
+        const val RELEASE_PAGE = "https://github.com/LONERXONE-ops/siphon/releases/tag/latest"
     }
 }

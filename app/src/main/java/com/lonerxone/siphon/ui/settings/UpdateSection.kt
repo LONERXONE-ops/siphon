@@ -181,6 +181,12 @@ fun UpdateSection(viewModel: UpdateViewModel = hiltViewModel()) {
 
             is UpdateUiState.Error -> {
                 Text(text = s.message, fontSize = 12.sp, color = AccentError)
+                Spacer(modifier = Modifier.height(8.dp))
+                SiphonSecondaryButton(
+                    text = "Open in browser",
+                    onClick = { viewModel.openReleasePage() },
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Spacer(modifier = Modifier.height(12.dp))
                 SiphonSecondaryButton(
                     text = "Try again",

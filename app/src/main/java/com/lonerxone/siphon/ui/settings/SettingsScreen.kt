@@ -170,7 +170,7 @@ fun SettingsScreen(
                             checked = prefs.allowMeteredWifi,
                             onCheckedChange = { viewModel.setAllowMeteredWifi(it) },
                             colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
+                                checkedThumbColor = DarkBackground,
                                 checkedTrackColor = PrimaryGradientStart,
                                 uncheckedThumbColor = TextMuted,
                                 uncheckedTrackColor = DarkElevated

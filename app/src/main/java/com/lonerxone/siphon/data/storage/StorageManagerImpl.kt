@@ -57,7 +57,7 @@ class StorageManagerImpl @Inject constructor(
 
         val freeBytes = targetDir.usableSpace
         // Require at least 2x free space for staging file + final destination copy
-        val requiredWithSafety = if (requiredBytes > 0) requiredBytes * 2 else 500 * 1024 * 1024L // minimum 500MB if unknown
+        val requiredWithSafety = if (requiredBytes > 0) requiredBytes + 100L * 1024 * 1024 else 100L * 1024 * 1024
 
         if (freeBytes < requiredWithSafety) {
             return StorageStatus.InsufficientSpace(

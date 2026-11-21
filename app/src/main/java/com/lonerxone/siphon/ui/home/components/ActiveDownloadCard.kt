@@ -1,9 +1,6 @@
 package com.lonerxone.siphon.ui.home.components
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,26 +8,23 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lonerxone.siphon.data.db.entity.DownloadItem
 import com.lonerxone.siphon.data.db.entity.DownloadStatus
+import com.lonerxone.siphon.ui.components.CircleActionButton
 import com.lonerxone.siphon.ui.components.GradientProgressBar
 import com.lonerxone.siphon.ui.components.MediaThumbnail
 import com.lonerxone.siphon.ui.components.SiphonCard
@@ -38,8 +32,6 @@ import com.lonerxone.siphon.ui.components.SiphonStatusChip
 import com.lonerxone.siphon.ui.components.formatFileSize
 import com.lonerxone.siphon.ui.components.formatTimeLeft
 import com.lonerxone.siphon.ui.components.formatTransferSpeed
-import com.lonerxone.siphon.ui.theme.DarkElevated
-import com.lonerxone.siphon.ui.theme.PrimaryGradientStart
 import com.lonerxone.siphon.ui.theme.TextMuted
 import com.lonerxone.siphon.ui.theme.TextPrimary
 import com.lonerxone.siphon.ui.theme.TextSecondary
@@ -140,48 +132,20 @@ fun ActiveDownloadCard(
 
             if (!isMoving) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    RoundIconButton(
+                    CircleActionButton(
                         icon = if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
                         description = if (isPaused) "Resume" else "Pause",
-                        background = if (isPaused) PrimaryGradientStart else DarkElevated,
-                        tint = Color.White,
+                        filled = isPaused,
                         onClick = { if (isPaused) onResume(item.id) else onPause(item.id) }
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    RoundIconButton(
+                    CircleActionButton(
                         icon = Icons.Default.Close,
                         description = "Cancel",
-                        background = DarkElevated,
-                        tint = TextSecondary,
                         onClick = { onCancel(item.id) }
                     )
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun RoundIconButton(
-    icon: ImageVector,
-    description: String,
-    background: Color,
-    tint: Color,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .size(38.dp)
-            .clip(CircleShape)
-            .background(background)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = description,
-            tint = tint,
-            modifier = Modifier.size(20.dp)
-        )
     }
 }

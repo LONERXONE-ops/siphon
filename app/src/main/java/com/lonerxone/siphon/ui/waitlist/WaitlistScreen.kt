@@ -28,9 +28,9 @@ import androidx.compose.material.icons.filled.AddLink
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -44,7 +44,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -53,18 +52,19 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.lonerxone.siphon.data.db.entity.DownloadItem
 import com.lonerxone.siphon.data.db.entity.DownloadStatus
 import com.lonerxone.siphon.data.network.NetworkState
+import com.lonerxone.siphon.ui.components.CircleActionButton
 import com.lonerxone.siphon.ui.components.MediaThumbnail
 import com.lonerxone.siphon.ui.components.SiphonCard
 import com.lonerxone.siphon.ui.components.SiphonPrimaryButton
 import com.lonerxone.siphon.ui.components.SiphonSecondaryButton
 import com.lonerxone.siphon.ui.components.SiphonStatusChip
+import com.lonerxone.siphon.ui.components.formatFileSize
+import com.lonerxone.siphon.ui.theme.AccentSuccess
 import com.lonerxone.siphon.ui.theme.AccentWarning
 import com.lonerxone.siphon.ui.theme.DarkBackground
 import com.lonerxone.siphon.ui.theme.DarkBorder
 import com.lonerxone.siphon.ui.theme.DarkElevated
 import com.lonerxone.siphon.ui.theme.DarkSurface
-import com.lonerxone.siphon.ui.theme.PrimaryGradientEnd
-import com.lonerxone.siphon.ui.theme.PrimaryGradientStart
 import com.lonerxone.siphon.ui.theme.TextMuted
 import com.lonerxone.siphon.ui.theme.TextPrimary
 import com.lonerxone.siphon.ui.theme.TextSecondary
@@ -76,9 +76,12 @@ fun WaitlistScreen(
     val waitlistItems by viewModel.waitlistItems.collectAsState()
     val activeDownloads by viewModel.activeDownloads.collectAsState()
     val networkState by viewModel.networkState.collectAsState()
-    val summary by viewModel.summary.collectAsState()
 
     var showBatchDialog by remember { mutableStateOf(false) }
+
+    // Started downloads that were paused live on the Home screen, not here
+    val shown = waitlistItems.filter { !(it.progress > 0f && it.status != DownloadStatus.WAITING) }
+    val totalBytes = shown.sumOf { it.totalBytes }
 
     Box(
         modifier = Modifier
@@ -92,84 +95,99 @@ fun WaitlistScreen(
         ) {
             item {
                 Spacer(modifier = Modifier.height(24.dp))
-                // Title
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "WAITLIST",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary
-                    )
+                    Column {
+                        Text(
+                            text = "Waitlist",
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = TextPrimary
+                        )
+                        val summary = if (shown.isEmpty()) {
+                            "Nothing waiting"
+                        } else if (totalBytes > 0L) {
+                            "${shown.size} waiting  •  about ${formatFileSize(totalBytes)}"
+                        } else {
+                            "${shown.size} waiting"
+                        }
+                        Text(text = summary, fontSize = 12.sp, color = TextSecondary)
+                    }
 
-                    // Batch Paste Button
                     SiphonSecondaryButton(
-                        text = "Paste Links",
+                        text = "Add links",
                         onClick = { showBatchDialog = true },
                         icon = {
-                            Icon(Icons.Default.AddLink, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(16.dp))
+                            Icon(
+                                Icons.Default.AddLink,
+                                contentDescription = null,
+                                tint = TextPrimary,
+                                modifier = Modifier.size(16.dp)
+                            )
                         }
                     )
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(18.dp))
 
-                // Status Banner with Pulsing Dot (PRD 5.5)
                 StatusBanner(
                     networkState = networkState,
                     activeCount = activeDownloads.size,
-                    waitlistCount = waitlistItems.size
+                    waitlistCount = shown.size
                 )
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                // Summary Line: e.g. "5 items • about 2.4 GB"
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "${summary.itemCount} items • about ${summary.formattedTotalSize}",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = TextSecondary
-                    )
-
-                    // Global Controls: Pause all / Resume all
-                    Row {
-                        TextButton(onClick = { viewModel.pauseAll() }) {
-                            Text("Pause all", color = AccentWarning, fontSize = 12.sp)
-                        }
-                        TextButton(onClick = { viewModel.resumeAll() }) {
-                            Text("Resume all", color = PrimaryGradientEnd, fontSize = 12.sp)
-                        }
-                    }
+                    PillAction(label = "Hold all", onClick = { viewModel.pauseAll() })
+                    PillAction(label = "Start all", onClick = { viewModel.resumeAll() })
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(16.dp))
             }
 
-            if (waitlistItems.isEmpty()) {
+            if (shown.isEmpty()) {
                 item {
                     SiphonCard(modifier = Modifier.fillMaxWidth()) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 32.dp),
+                                .padding(vertical = 30.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Text("Waitlist is empty", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text("Links added with 'Download later' appear here.", color = TextSecondary, fontSize = 13.sp)
+                            Box(
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(CircleShape)
+                                    .background(DarkElevated),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.Schedule,
+                                    contentDescription = null,
+                                    tint = TextMuted,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Text("Your waitlist is empty", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Choose Download later on any link and it starts by itself on Wi-Fi.",
+                                color = TextSecondary,
+                                fontSize = 12.sp
+                            )
                         }
                     }
                 }
             } else {
-                items(waitlistItems, key = { it.id }) { item ->
+                items(shown, key = { it.id }) { item ->
                     WaitlistCard(
                         item = item,
                         onStartNow = { viewModel.startNow(item) },
@@ -182,7 +200,7 @@ fun WaitlistScreen(
                         },
                         onRemove = { viewModel.removeItem(item.id) }
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
 
@@ -191,7 +209,6 @@ fun WaitlistScreen(
             }
         }
 
-        // Batch Paste Multi-line Dialog (PRD 5.1)
         if (showBatchDialog) {
             BatchPasteDialog(
                 onDismiss = { showBatchDialog = false },
@@ -205,6 +222,25 @@ fun WaitlistScreen(
 }
 
 @Composable
+private fun PillAction(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(DarkElevated)
+            .border(1.dp, DarkBorder, RoundedCornerShape(20.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 7.dp)
+    ) {
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = TextPrimary
+        )
+    }
+}
+
+@Composable
 fun StatusBanner(
     networkState: NetworkState,
     activeCount: Int,
@@ -212,47 +248,61 @@ fun StatusBanner(
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val alphaAnim by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
+        initialValue = 0.35f,
         targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1000),
+            animation = tween(1100),
             repeatMode = RepeatMode.Reverse
         ),
         label = "pulseAlpha"
     )
 
-    val (bannerText, bannerColor) = when {
-        activeCount > 0 -> "On Wi-Fi: downloading $activeCount item(s)" to PrimaryGradientEnd
-        networkState.isUsableForDownload -> "On Wi-Fi: listening for queue" to PrimaryGradientStart
-        networkState.isMetered && !networkState.isWifi -> "On mobile data: waiting for Wi-Fi" to AccentWarning
-        else -> "Waiting for Wi-Fi" to Color(0xFF38BDF8)
+    val (title, subtitle, dotColor) = when {
+        activeCount > 0 -> Triple("Downloading $activeCount", "Working through your list on Wi-Fi.", AccentSuccess)
+        networkState.isUsableForDownload -> Triple(
+            "Wi-Fi connected",
+            if (waitlistCount > 0) "Starting your waitlist..." else "New waitlist items start right away.",
+            AccentSuccess
+        )
+        networkState.isMetered && !networkState.isWifi -> Triple(
+            "On mobile data",
+            "Waitlist downloads wait for Wi-Fi.",
+            AccentWarning
+        )
+        else -> Triple("Waiting for Wi-Fi", "Downloads start automatically when you connect.", TextSecondary)
     }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(DarkElevated)
-            .border(1.dp, DarkBorder, RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(18.dp))
+            .background(DarkSurface)
+            .border(1.dp, DarkBorder, RoundedCornerShape(18.dp))
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Pulsing status dot
         Box(
             modifier = Modifier
                 .size(10.dp)
                 .clip(CircleShape)
-                .background(bannerColor.copy(alpha = alphaAnim))
+                .background(dotColor.copy(alpha = alphaAnim))
         )
 
-        Spacer(modifier = Modifier.width(12.dp))
+        Spacer(modifier = Modifier.width(14.dp))
 
-        Text(
-            text = bannerText,
-            color = TextPrimary,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium
-        )
+        Column {
+            Text(
+                text = title,
+                color = TextPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = subtitle,
+                color = TextSecondary,
+                fontSize = 12.sp
+            )
+        }
     }
 }
 
@@ -263,19 +313,15 @@ fun WaitlistCard(
     onPauseToggle: () -> Unit,
     onRemove: () -> Unit
 ) {
-    val isPausedByUser = item.status == DownloadStatus.PAUSED_BY_USER
+    val isHeld = item.status == DownloadStatus.PAUSED_BY_USER
 
     SiphonCard(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             MediaThumbnail(
                 item = item,
                 modifier = Modifier
-                    .size(width = 76.dp, height = 48.dp)
-                    .clip(RoundedCornerShape(10.dp))
+                    .size(width = 96.dp, height = 60.dp)
+                    .clip(RoundedCornerShape(12.dp))
             )
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -286,59 +332,67 @@ fun WaitlistCard(
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 14.sp,
                     color = TextPrimary,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
+                Spacer(modifier = Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     SiphonStatusChip(status = item.status)
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    // Rule chip
+                    Spacer(modifier = Modifier.width(6.dp))
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(DarkBorder)
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(DarkElevated)
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
+                        Text(text = "Any Wi-Fi", fontSize = 11.sp, color = TextSecondary)
+                    }
+                    if (item.totalBytes > 0L) {
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Any Wi-Fi",
-                            fontSize = 10.sp,
-                            color = TextSecondary
+                            text = formatFileSize(item.totalBytes),
+                            fontSize = 11.sp,
+                            color = TextMuted
                         )
                     }
                 }
-
-                if (!item.errorMessage.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = item.errorMessage,
-                        fontSize = 11.sp,
-                        color = Color(0xFFFB923C)
-                    )
-                }
             }
+        }
 
-            // Actions
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onStartNow) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = "Start now", tint = PrimaryGradientStart)
-                }
+        if (!item.errorMessage.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = item.errorMessage,
+                fontSize = 11.sp,
+                color = AccentWarning
+            )
+        }
 
-                IconButton(onClick = onPauseToggle) {
-                    Icon(
-                        imageVector = if (isPausedByUser) Icons.Default.PlayArrow else Icons.Default.Pause,
-                        contentDescription = "Hold",
-                        tint = if (isPausedByUser) AccentWarning else TextSecondary
-                    )
-                }
+        Spacer(modifier = Modifier.height(12.dp))
 
-                IconButton(onClick = onRemove) {
-                    Icon(Icons.Default.Delete, contentDescription = "Remove", tint = TextMuted)
-                }
-            }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CircleActionButton(
+                icon = Icons.Default.PlayArrow,
+                description = "Start now",
+                filled = true,
+                onClick = onStartNow
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            CircleActionButton(
+                icon = if (isHeld) Icons.Default.PlayArrow else Icons.Default.Pause,
+                description = if (isHeld) "Release hold" else "Hold",
+                onClick = onPauseToggle
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            CircleActionButton(
+                icon = Icons.Default.Delete,
+                description = "Remove",
+                onClick = onRemove
+            )
         }
     }
 }
@@ -353,12 +407,12 @@ fun BatchPasteDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text("Paste Links", fontWeight = FontWeight.Bold, color = TextPrimary)
+            Text("Add links", fontWeight = FontWeight.Bold, color = TextPrimary)
         },
         text = {
             Column {
                 Text(
-                    "Paste multiple links below (one link per line). They will all be parked in the Waitlist.",
+                    "Paste your links below, one per line. They all go to the waitlist.",
                     color = TextSecondary,
                     fontSize = 13.sp
                 )
@@ -374,17 +428,18 @@ fun BatchPasteDialog(
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = DarkSurface,
                         unfocusedContainerColor = DarkSurface,
-                        focusedBorderColor = PrimaryGradientStart,
+                        focusedBorderColor = TextSecondary,
                         unfocusedBorderColor = DarkBorder,
                         focusedTextColor = TextPrimary,
-                        unfocusedTextColor = TextPrimary
+                        unfocusedTextColor = TextPrimary,
+                        cursorColor = TextPrimary
                     )
                 )
             }
         },
         confirmButton = {
             SiphonPrimaryButton(
-                text = "Add to Waitlist",
+                text = "Add to waitlist",
                 onClick = { onAddLinks(rawText) }
             )
         },
