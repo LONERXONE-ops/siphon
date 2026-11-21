@@ -124,7 +124,7 @@ class NotificationHelper @Inject constructor(
         val notification = NotificationCompat.Builder(context, CHANNEL_WAITLIST)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentTitle("Downloads Completed")
-            .setContentText("$count downloads done, $totalBytesFormatted saved to SD card")
+            .setContentText("$count downloads done, $totalBytesFormatted saved")
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
             .build()

@@ -2,8 +2,6 @@ package com.lonerxone.siphon.ui.settings
 
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
-import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,16 +16,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryAlert
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SdCard
-import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
@@ -40,14 +35,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.lonerxone.siphon.ui.components.SiphonCard
-import com.lonerxone.siphon.ui.components.SiphonPrimaryButton
 import com.lonerxone.siphon.ui.components.SiphonSecondaryButton
 import com.lonerxone.siphon.ui.theme.AccentError
 import com.lonerxone.siphon.ui.theme.AccentSuccess
@@ -68,7 +62,6 @@ fun SettingsScreen(
     val engineState by viewModel.engineUpdateState.collectAsState()
     val context = LocalContext.current
 
-    // SAF folder picker launcher
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
@@ -79,6 +72,18 @@ fun SettingsScreen(
             )
             viewModel.setSdFolderUri(uri)
         }
+    }
+
+    val savedUri = prefs.sdFolderUri
+    val usingPhoneStorage = savedUri == null || Uri.parse(savedUri).scheme == "siphon"
+    val sdMounted = viewModel.isSdCardMounted
+
+    val locationTitle = if (usingPhoneStorage) "Phone storage" else "Custom folder"
+    val locationDetail = when {
+        usingPhoneStorage && sdMounted -> "Saving to Download/SIPHON. An SD card is available if you want to use it."
+        usingPhoneStorage -> "Saving to Download/SIPHON. No SD card detected."
+        sdMounted -> "Folder: ${Uri.parse(savedUri).lastPathSegment}"
+        else -> "If this folder is on a missing SD card, files are saved to Download/SIPHON instead."
     }
 
     Box(
@@ -94,43 +99,35 @@ fun SettingsScreen(
             item {
                 Spacer(modifier = Modifier.height(24.dp))
                 Text(
-                    text = "SETTINGS",
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold,
+                    text = "Settings",
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.ExtraBold,
                     color = TextPrimary
                 )
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(22.dp))
 
-                // SD Card Storage Section
-                Text(
-                    text = "STORAGE (SD CARD FIRST)",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextSecondary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-
+                SectionTitle("SAVE LOCATION")
                 SiphonCard(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            Icons.Default.SdCard,
+                            imageVector = if (usingPhoneStorage) Icons.Default.Folder else Icons.Default.SdCard,
                             contentDescription = null,
-                            tint = if (viewModel.isSdCardMounted) AccentSuccess else AccentWarning,
+                            tint = if (usingPhoneStorage) PrimaryGradientStart else AccentSuccess,
                             modifier = Modifier.size(24.dp)
                         )
-                        Spacer(modifier = Modifier.padding(6.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = if (viewModel.isSdCardMounted) "Physical SD card detected" else "No physical SD card found",
+                                text = locationTitle,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = TextPrimary
                             )
                             Text(
-                                text = if (prefs.sdFolderUri != null) "Folder configured: ${Uri.parse(prefs.sdFolderUri).lastPathSegment}" else "Folder not configured",
+                                text = locationDetail,
                                 fontSize = 12.sp,
                                 color = TextSecondary
                             )
@@ -140,26 +137,26 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(14.dp))
 
                     SiphonSecondaryButton(
-                        text = if (prefs.sdFolderUri != null) "Change SD Folder" else "Select SD Folder",
+                        text = if (sdMounted) "Choose SD card or folder" else "Choose a folder",
                         onClick = { folderPickerLauncher.launch(null) },
                         modifier = Modifier.fillMaxWidth(),
                         icon = { Icon(Icons.Default.Folder, contentDescription = null, tint = TextPrimary) }
                     )
+
+                    if (!usingPhoneStorage) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SiphonSecondaryButton(
+                            text = "Use phone storage",
+                            onClick = { viewModel.setSdFolderUri(Uri.parse("siphon://phone")) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Network & Mobile Data Rules
-                Text(
-                    text = "NETWORK & WAITLIST RULES",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextSecondary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-
+                SectionTitle("NETWORK AND WAITLIST")
                 SiphonCard(modifier = Modifier.fillMaxWidth()) {
-                    // Metered Wi-Fi Toggle
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -167,13 +164,13 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Allow metered Wi-Fi", fontWeight = FontWeight.Medium, fontSize = 14.sp, color = TextPrimary)
-                            Text("Permits auto-start on phone hotspots", fontSize = 12.sp, color = TextSecondary)
+                            Text("Lets the waitlist start on phone hotspots", fontSize = 12.sp, color = TextSecondary)
                         }
                         Switch(
                             checked = prefs.allowMeteredWifi,
                             onCheckedChange = { viewModel.setAllowMeteredWifi(it) },
                             colors = SwitchDefaults.colors(
-                                checkedThumbColor = DarkBackground,
+                                checkedThumbColor = Color.White,
                                 checkedTrackColor = PrimaryGradientStart,
                                 uncheckedThumbColor = TextMuted,
                                 uncheckedTrackColor = DarkElevated
@@ -183,9 +180,8 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Concurrency Limit
                     Text(
-                        text = "Max Concurrent Downloads: ${prefs.concurrencyLimit}",
+                        text = "Downloads at the same time: ${prefs.concurrencyLimit}",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         color = TextPrimary
@@ -206,59 +202,48 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Engine Management Section
-                Text(
-                    text = "DOWNLOAD ENGINES",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextSecondary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-
+                SectionTitle("DOWNLOAD ENGINE")
                 SiphonCard(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "yt-dlp & aria2c Engines",
+                        text = "yt-dlp engine",
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 14.sp,
                         color = TextPrimary
                     )
                     Text(
-                        text = "Update the engine when sites change their video extraction format.",
+                        text = "Update it when a site stops working. Sites change often and the engine needs to keep up.",
                         fontSize = 12.sp,
                         color = TextSecondary
                     )
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    when (engineState) {
+                    when (val state = engineState) {
                         is EngineUpdateState.Checking -> {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), color = PrimaryGradientStart)
-                                Spacer(modifier = Modifier.padding(6.dp))
-                                Text("Updating engine from release feed...", fontSize = 13.sp, color = TextSecondary)
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = PrimaryGradientStart
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Updating engine...", fontSize = 13.sp, color = TextSecondary)
                             }
+                            Spacer(modifier = Modifier.height(8.dp))
                         }
                         is EngineUpdateState.Success -> {
-                            Text(
-                                text = (engineState as EngineUpdateState.Success).message,
-                                fontSize = 12.sp,
-                                color = AccentSuccess
-                            )
+                            Text(text = state.message, fontSize = 12.sp, color = AccentSuccess)
                             Spacer(modifier = Modifier.height(8.dp))
                         }
                         is EngineUpdateState.Error -> {
-                            Text(
-                                text = (engineState as EngineUpdateState.Error).error,
-                                fontSize = 12.sp,
-                                color = AccentError
-                            )
+                            Text(text = state.error, fontSize = 12.sp, color = AccentError)
                             Spacer(modifier = Modifier.height(8.dp))
                         }
                         is EngineUpdateState.Idle -> {}
                     }
 
                     SiphonSecondaryButton(
-                        text = "Update yt-dlp Engine",
+                        text = "Update engine",
                         onClick = { viewModel.updateEngine() },
                         modifier = Modifier.fillMaxWidth(),
                         icon = { Icon(Icons.Default.Refresh, contentDescription = null, tint = TextPrimary) }
@@ -271,21 +256,18 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Samsung Galaxy A06 Battery Guide
-                Text(
-                    text = "BATTERY & BACKGROUND RESILIENCE",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextSecondary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-
+                SectionTitle("BACKGROUND DOWNLOADS")
                 SiphonCard(modifier = Modifier.fillMaxWidth()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.BatteryAlert, contentDescription = null, tint = AccentWarning)
-                        Spacer(modifier = Modifier.padding(4.dp))
+                        Icon(
+                            Icons.Default.BatteryAlert,
+                            contentDescription = null,
+                            tint = AccentWarning,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "Samsung One UI / Low-End Hardware",
+                            text = "Keep downloads running",
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 14.sp,
                             color = TextPrimary
@@ -295,7 +277,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
-                        text = "Samsung Galaxy A06 aggressively terminates background services. To ensure overnight downloads complete, whitelist SIPHON:",
+                        text = "Many phones stop background apps to save battery. Allow SIPHON to run in the background so long and overnight downloads can finish.",
                         fontSize = 12.sp,
                         color = TextSecondary
                     )
@@ -303,7 +285,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     SiphonSecondaryButton(
-                        text = "Ignore Battery Optimization",
+                        text = "Allow background activity",
                         onClick = {
                             val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                                 data = Uri.parse("package:${context.packageName}")
@@ -316,15 +298,7 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // About Screen (PRD Header requirement)
-                Text(
-                    text = "ABOUT",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextSecondary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-
+                SectionTitle("ABOUT")
                 SiphonCard(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = "SIPHON v${com.lonerxone.siphon.BuildConfig.VERSION_NAME}",
@@ -341,13 +315,13 @@ fun SettingsScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Repository: github.com/LONERXONE-ops/siphon",
+                        text = "github.com/LONERXONE-ops/siphon",
                         fontSize = 12.sp,
                         color = TextSecondary
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Sideloaded personal downloader. Single user, zero analytics, zero ads, zero accounts.",
+                        text = "A personal downloader. No accounts, no ads, no tracking.",
                         fontSize = 12.sp,
                         color = TextMuted
                     )
@@ -357,4 +331,16 @@ fun SettingsScreen(
             }
         }
     }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text = text,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.sp,
+        color = TextSecondary
+    )
+    Spacer(modifier = Modifier.height(8.dp))
 }

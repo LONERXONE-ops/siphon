@@ -1,8 +1,10 @@
 package com.lonerxone.siphon.data.storage
 
+import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.os.Environment
+import android.provider.MediaStore
 import androidx.documentfile.provider.DocumentFile
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -78,6 +80,21 @@ class StorageManagerImpl @Inject constructor(
         targetTreeUri: Uri,
         subfolderName: String?,
         onProgress: ((copiedBytes: Long, totalBytes: Long) -> Unit)?
+    ): Result<Uri> {
+        if (targetTreeUri.scheme == "siphon") {
+            return saveToPhoneStorage(stagingFile, subfolderName)
+        }
+        val safResult = moveToSafInternal(stagingFile, targetTreeUri, subfolderName, onProgress)
+        if (safResult.isSuccess) return safResult
+        // The chosen folder is not usable (for example the SD card was removed): use phone storage
+        return saveToPhoneStorage(stagingFile, subfolderName)
+    }
+
+    private suspend fun moveToSafInternal(
+        stagingFile: File,
+        targetTreeUri: Uri,
+        subfolderName: String?,
+        onProgress: ((copiedBytes: Long, totalBytes: Long) -> Unit)?
     ): Result<Uri> = withContext(Dispatchers.IO) {
         if (!stagingFile.exists()) {
             return@withContext Result.failure(IOException("Staging file does not exist: ${stagingFile.absolutePath}"))
@@ -145,6 +162,68 @@ class StorageManagerImpl @Inject constructor(
             Result.success(finalDoc.uri)
         } catch (e: Exception) {
             finalDoc.delete()
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun saveToPhoneStorage(
+        stagingFile: File,
+        subfolderName: String?
+    ): Result<Uri> = withContext(Dispatchers.IO) {
+        if (!stagingFile.exists()) {
+            return@withContext Result.failure(IOException("Downloaded file is missing: ${stagingFile.name}"))
+        }
+
+        val resolver = context.contentResolver
+        val relativePath = buildString {
+            append(Environment.DIRECTORY_DOWNLOADS)
+            append("/SIPHON")
+            if (!subfolderName.isNullOrBlank()) {
+                append("/")
+                append(subfolderName.replace(Regex("""[\\/:*?"<>|]"""), "_"))
+            }
+        }
+
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, stagingFile.name)
+            put(MediaStore.MediaColumns.MIME_TYPE, getMimeType(stagingFile.name))
+            put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: return@withContext Result.failure(IOException("Could not create a file in phone storage"))
+
+        try {
+            val total = stagingFile.length()
+            var copied = 0L
+            FileInputStream(stagingFile).use { input ->
+                val output = resolver.openOutputStream(uri)
+                    ?: throw IOException("Could not open the new file for writing")
+                output.use { out ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        out.write(buffer, 0, read)
+                        copied += read
+                    }
+                    out.flush()
+                }
+            }
+
+            if (copied != total) {
+                throw IOException("File size mismatch after copy")
+            }
+
+            val done = ContentValues().apply {
+                put(MediaStore.MediaColumns.IS_PENDING, 0)
+            }
+            resolver.update(uri, done, null, null)
+            stagingFile.delete()
+            Result.success(uri)
+        } catch (e: Exception) {
+            resolver.delete(uri, null, null)
             Result.failure(e)
         }
     }

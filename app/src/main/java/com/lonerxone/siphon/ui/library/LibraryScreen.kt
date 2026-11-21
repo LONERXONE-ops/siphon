@@ -1,7 +1,5 @@
 package com.lonerxone.siphon.ui.library
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,15 +16,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -36,16 +33,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import coil.compose.AsyncImage
 import com.lonerxone.siphon.data.db.entity.DownloadItem
+import com.lonerxone.siphon.ui.components.MediaThumbnail
 import com.lonerxone.siphon.ui.components.SiphonCard
+import com.lonerxone.siphon.ui.components.describeSaveLocation
+import com.lonerxone.siphon.ui.components.formatFileSize
+import com.lonerxone.siphon.ui.components.openMedia
+import com.lonerxone.siphon.ui.components.shareMedia
 import com.lonerxone.siphon.ui.theme.DarkBackground
 import com.lonerxone.siphon.ui.theme.DarkBorder
 import com.lonerxone.siphon.ui.theme.DarkElevated
@@ -76,20 +77,30 @@ fun LibraryScreen(
         ) {
             item {
                 Spacer(modifier = Modifier.height(24.dp))
-                Text(
-                    text = "LIBRARY",
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimary
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    Text(
+                        text = "Library",
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "${items.size} files",
+                        fontSize = 12.sp,
+                        color = TextSecondary
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Search Bar
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { viewModel.onSearchQueryChanged(it) },
-                    placeholder = { Text("Search downloaded media...", color = TextMuted) },
+                    placeholder = { Text("Search your downloads", color = TextMuted) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                     leadingIcon = {
@@ -108,7 +119,6 @@ fun LibraryScreen(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Filter Pills
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -144,14 +154,27 @@ fun LibraryScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 40.dp),
+                                .padding(vertical = 36.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Icon(Icons.Default.Folder, contentDescription = null, tint = TextMuted, modifier = Modifier.size(36.dp))
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text("No downloaded files found", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                            Box(
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(CircleShape)
+                                    .background(DarkElevated),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.Folder,
+                                    contentDescription = null,
+                                    tint = TextMuted,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Text("Nothing here yet", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
                             Spacer(modifier = Modifier.height(4.dp))
-                            Text("Completed downloads land on your SD card.", color = TextSecondary, fontSize = 12.sp)
+                            Text("Your finished downloads will appear here.", color = TextSecondary, fontSize = 12.sp)
                         }
                     }
                 }
@@ -160,23 +183,10 @@ fun LibraryScreen(
                     LibraryItemCard(
                         item = item,
                         onOpen = {
-                            if (item.finalUri != null) {
-                                val intent = Intent(Intent.ACTION_VIEW).apply {
-                                    setDataAndType(Uri.parse(item.finalUri), "*/*")
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(Intent.createChooser(intent, "Open with"))
-                            }
+                            item.finalUri?.let { openMedia(context, it, item.title) }
                         },
                         onShare = {
-                            if (item.finalUri != null) {
-                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                    putExtra(Intent.EXTRA_STREAM, Uri.parse(item.finalUri))
-                                    type = "*/*"
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(Intent.createChooser(shareIntent, "Share file"))
-                            }
+                            item.finalUri?.let { shareMedia(context, it, item.title) }
                         },
                         onDelete = { viewModel.deleteItem(item.id) }
                     )
@@ -203,13 +213,13 @@ fun FilterPill(
             .background(if (isSelected) PrimaryGradientStart else DarkElevated)
             .border(1.dp, if (isSelected) PrimaryGradientStart else DarkBorder, RoundedCornerShape(20.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .padding(horizontal = 16.dp, vertical = 7.dp)
     ) {
         Text(
             text = label,
             fontSize = 12.sp,
-            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-            color = if (isSelected) DarkBackground else TextPrimary
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+            color = if (isSelected) Color.White else TextSecondary
         )
     }
 }
@@ -221,6 +231,13 @@ fun LibraryItemCard(
     onShare: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val sizeBytes = maxOf(item.totalBytes, item.bytesDownloaded)
+    val meta = listOf(
+        item.site,
+        if (sizeBytes > 0L) formatFileSize(sizeBytes) else "",
+        describeSaveLocation(item.finalUri)
+    ).filter { it.isNotBlank() }.joinToString("  •  ")
+
     SiphonCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -228,12 +245,10 @@ fun LibraryItemCard(
                 .clickable(onClick = onOpen),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            AsyncImage(
-                model = item.thumbnailUrl ?: android.R.drawable.stat_sys_download_done,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
+            MediaThumbnail(
+                item = item,
                 modifier = Modifier
-                    .size(56.dp)
+                    .size(width = 96.dp, height = 60.dp)
                     .clip(RoundedCornerShape(12.dp))
             )
 
@@ -245,35 +260,40 @@ fun LibraryItemCard(
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 14.sp,
                     color = TextPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = meta,
+                    fontSize = 12.sp,
+                    color = TextSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                val sizeText = if (item.bytesDownloaded > 0) {
-                    val mb = item.bytesDownloaded / (1024.0 * 1024.0)
-                    if (mb >= 1000) String.format("%.1f GB", mb / 1024.0) else String.format("%.0f MB", mb)
-                } else "File"
-
-                Text(
-                    text = "${item.site} • $sizeText",
-                    fontSize = 12.sp,
-                    color = TextSecondary
-                )
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onOpen) {
-                    Icon(Icons.Default.PlayCircle, contentDescription = "Open", tint = PrimaryGradientStart)
-                }
-                IconButton(onClick = onShare) {
-                    Icon(Icons.Default.Share, contentDescription = "Share", tint = TextSecondary)
-                }
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = TextMuted)
-                }
+            Spacer(modifier = Modifier.width(6.dp))
+
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                SmallAction(icon = { Icon(Icons.Default.Share, contentDescription = "Share", tint = TextSecondary, modifier = Modifier.size(18.dp)) }, onClick = onShare)
+                Spacer(modifier = Modifier.height(6.dp))
+                SmallAction(icon = { Icon(Icons.Default.Delete, contentDescription = "Delete", tint = TextMuted, modifier = Modifier.size(18.dp)) }, onClick = onDelete)
             }
         }
+    }
+}
+
+@Composable
+private fun SmallAction(icon: @Composable () -> Unit, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(DarkElevated)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        icon()
     }
 }

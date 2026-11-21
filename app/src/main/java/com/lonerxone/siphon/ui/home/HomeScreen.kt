@@ -3,6 +3,8 @@ package com.lonerxone.siphon.ui.home
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,15 +14,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -36,6 +43,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -44,8 +53,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.lonerxone.siphon.data.db.entity.DownloadItem
+import com.lonerxone.siphon.ui.components.MediaThumbnail
 import com.lonerxone.siphon.ui.components.SiphonCard
 import com.lonerxone.siphon.ui.components.SiphonPrimaryButton
+import com.lonerxone.siphon.ui.components.describeSaveLocation
+import com.lonerxone.siphon.ui.components.formatFileSize
+import com.lonerxone.siphon.ui.components.openMedia
 import com.lonerxone.siphon.ui.home.components.ActiveDownloadCard
 import com.lonerxone.siphon.ui.home.components.AddLinkBottomSheet
 import com.lonerxone.siphon.ui.theme.DarkBackground
@@ -70,7 +83,7 @@ fun HomeScreen(
     var urlInput by remember { mutableStateOf("") }
     var clipboardUrl by remember { mutableStateOf<String?>(null) }
 
-    // Foreground clipboard detection chip (PRD 5.1)
+    // Foreground clipboard detection
     LaunchedEffect(Unit) {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clipData = clipboard.primaryClip
@@ -82,7 +95,7 @@ fun HomeScreen(
         }
     }
 
-    // Auto-trigger if shared from external app (ACTION_SEND)
+    // Auto-trigger if shared from another app
     LaunchedEffect(sharedUrl) {
         if (!sharedUrl.isNullOrBlank()) {
             urlInput = sharedUrl
@@ -102,130 +115,54 @@ fun HomeScreen(
         ) {
             item {
                 Spacer(modifier = Modifier.height(24.dp))
-                // App Header
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "SIPHON",
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary
-                        )
-                        Text(
-                            text = "Download Anything",
-                            fontSize = 12.sp,
-                            color = TextSecondary
-                        )
-                    }
-                }
 
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // Paste Input Field
-                OutlinedTextField(
-                    value = urlInput,
-                    onValueChange = { urlInput = it },
-                    placeholder = { Text("Paste link from anywhere...", color = TextMuted) },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = DarkSurface,
-                        unfocusedContainerColor = DarkSurface,
-                        focusedBorderColor = PrimaryGradientStart,
-                        unfocusedBorderColor = DarkBorder,
-                        focusedTextColor = TextPrimary,
-                        unfocusedTextColor = TextPrimary
-                    ),
-                    trailingIcon = {
-                        IconButton(
-                            onClick = {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val text = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
-                                if (!text.isNullOrBlank()) {
-                                    urlInput = text
-                                }
-                            }
-                        ) {
-                            Icon(Icons.Default.ContentPaste, contentDescription = "Paste", tint = TextSecondary)
-                        }
-                    },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                    keyboardActions = KeyboardActions(
-                        onGo = {
-                            if (urlInput.isNotBlank()) viewModel.fetchLinkInfo(urlInput)
-                        }
-                    )
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Clipboard Chip if detected
-                if (!clipboardUrl.isNullOrBlank() && urlInput != clipboardUrl) {
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(DarkElevated)
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "From clipboard: ${clipboardUrl?.take(28)}...",
-                            fontSize = 12.sp,
-                            color = TextSecondary
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        SiphonPrimaryButton(
-                            text = "Use",
-                            onClick = {
-                                clipboardUrl?.let {
-                                    urlInput = it
-                                    viewModel.fetchLinkInfo(it)
-                                }
-                            }
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(10.dp))
-                }
-
-                SiphonPrimaryButton(
-                    text = "Inspect Link",
-                    onClick = {
-                        if (urlInput.isNotBlank()) viewModel.fetchLinkInfo(urlInput)
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(modifier = Modifier.height(28.dp))
-
-                // Active Downloads Section
                 Text(
-                    text = "ACTIVE DOWNLOADS (${activeDownloads.size})",
+                    text = "SIPHON",
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 3.sp,
+                    color = TextPrimary
+                )
+                Text(
+                    text = "Download anything",
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
                     color = TextSecondary
                 )
+
+                Spacer(modifier = Modifier.height(22.dp))
+
+                LinkInputCard(
+                    urlInput = urlInput,
+                    onUrlChange = { urlInput = it },
+                    clipboardUrl = clipboardUrl,
+                    onPaste = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val text = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+                        if (!text.isNullOrBlank()) urlInput = text
+                    },
+                    onInspect = {
+                        if (urlInput.isNotBlank()) viewModel.fetchLinkInfo(urlInput.trim())
+                    },
+                    onUseClipboard = {
+                        clipboardUrl?.let {
+                            urlInput = it
+                            viewModel.fetchLinkInfo(it)
+                        }
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(30.dp))
+                SectionHeader(title = "Downloading", count = activeDownloads.size)
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
             if (activeDownloads.isEmpty()) {
                 item {
-                    SiphonCard(modifier = Modifier.fillMaxWidth()) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 20.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Icon(Icons.Default.Download, contentDescription = null, tint = TextMuted)
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("No active downloads", color = TextSecondary, fontSize = 13.sp)
-                        }
-                    }
+                    EmptyStateCard(
+                        icon = Icons.Default.Download,
+                        title = "Nothing downloading",
+                        subtitle = "Paste a link above to get started."
+                    )
                 }
             } else {
                 items(activeDownloads, key = { it.id }) { item ->
@@ -239,40 +176,32 @@ fun HomeScreen(
                 }
             }
 
-            // Recent Completed Section
             item {
-                Spacer(modifier = Modifier.height(28.dp))
-                Text(
-                    text = "RECENT COMPLETED",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextSecondary
-                )
+                Spacer(modifier = Modifier.height(30.dp))
+                SectionHeader(title = "Recently completed", count = null)
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
             if (recentCompleted.isEmpty()) {
                 item {
-                    Text(
-                        text = "No downloads completed yet.",
-                        color = TextMuted,
-                        fontSize = 13.sp,
-                        modifier = Modifier.padding(vertical = 12.dp)
+                    EmptyStateCard(
+                        icon = Icons.Default.Folder,
+                        title = "No downloads yet",
+                        subtitle = "Finished downloads will show up here."
                     )
                 }
             } else {
                 items(recentCompleted, key = { it.id }) { item ->
                     RecentCompletedRow(item = item)
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                 }
             }
 
             item {
-                Spacer(modifier = Modifier.height(80.dp)) // padding for bottom nav
+                Spacer(modifier = Modifier.height(80.dp))
             }
         }
 
-        // Add Link Bottom Sheet
         AddLinkBottomSheet(
             uiState = addSheetState,
             onDismiss = { viewModel.dismissSheet() },
@@ -290,27 +219,238 @@ fun HomeScreen(
 }
 
 @Composable
+private fun LinkInputCard(
+    urlInput: String,
+    onUrlChange: (String) -> Unit,
+    clipboardUrl: String?,
+    onPaste: () -> Unit,
+    onInspect: () -> Unit,
+    onUseClipboard: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            .background(DarkSurface)
+            .border(1.dp, DarkBorder, RoundedCornerShape(24.dp))
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "Paste a link",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = TextPrimary
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = "Videos, music and files from almost any site.",
+            fontSize = 12.sp,
+            color = TextSecondary
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        OutlinedTextField(
+            value = urlInput,
+            onValueChange = onUrlChange,
+            placeholder = { Text("https://...", color = TextMuted) },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = DarkBackground,
+                unfocusedContainerColor = DarkBackground,
+                focusedBorderColor = PrimaryGradientStart,
+                unfocusedBorderColor = DarkBorder,
+                focusedTextColor = TextPrimary,
+                unfocusedTextColor = TextPrimary
+            ),
+            trailingIcon = {
+                IconButton(
+                    onClick = {
+                        if (urlInput.isBlank()) onPaste() else onUrlChange("")
+                    }
+                ) {
+                    Icon(
+                        imageVector = if (urlInput.isBlank()) Icons.Default.ContentPaste else Icons.Default.Close,
+                        contentDescription = if (urlInput.isBlank()) "Paste" else "Clear",
+                        tint = TextSecondary
+                    )
+                }
+            },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+            keyboardActions = KeyboardActions(onGo = { onInspect() })
+        )
+
+        if (!clipboardUrl.isNullOrBlank() && urlInput != clipboardUrl) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(DarkElevated)
+                    .clickable(onClick = onUseClipboard)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ContentPaste,
+                    contentDescription = null,
+                    tint = PrimaryGradientStart,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "Link in clipboard", fontSize = 11.sp, color = TextSecondary)
+                    Text(
+                        text = clipboardUrl,
+                        fontSize = 12.sp,
+                        color = TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Text(
+                    text = "USE",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = PrimaryGradientStart
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        SiphonPrimaryButton(
+            text = "Inspect link",
+            onClick = onInspect,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun SectionHeader(title: String, count: Int?) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = title,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = TextPrimary
+        )
+        if (count != null && count > 0) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(PrimaryGradientStart.copy(alpha = 0.18f))
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = "$count",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = PrimaryGradientStart
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyStateCard(icon: ImageVector, title: String, subtitle: String) {
+    SiphonCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .background(DarkElevated),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = TextMuted,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(text = title, color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(text = subtitle, color = TextSecondary, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
 fun RecentCompletedRow(item: DownloadItem) {
+    val context = LocalContext.current
+    val sizeBytes = maxOf(item.totalBytes, item.bytesDownloaded)
+    val meta = listOf(
+        item.site,
+        if (sizeBytes > 0L) formatFileSize(sizeBytes) else "",
+        describeSaveLocation(item.finalUri)
+    ).filter { it.isNotBlank() }.joinToString("  •  ")
+
     SiphonCard(modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = item.finalUri != null) {
+                    item.finalUri?.let { openMedia(context, it, item.title) }
+                },
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            MediaThumbnail(
+                item = item,
+                modifier = Modifier
+                    .size(width = 96.dp, height = 60.dp)
+                    .clip(RoundedCornerShape(12.dp))
+            )
+
+            Spacer(modifier = Modifier.width(12.dp))
+
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = item.title,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.SemiBold,
                     fontSize = 14.sp,
                     color = TextPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = meta,
+                    fontSize = 12.sp,
+                    color = TextSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = "${item.site} • Saved to SD card",
-                    fontSize = 12.sp,
-                    color = TextSecondary
-                )
+            }
+
+            if (item.finalUri != null) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(DarkElevated),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Open",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
     }

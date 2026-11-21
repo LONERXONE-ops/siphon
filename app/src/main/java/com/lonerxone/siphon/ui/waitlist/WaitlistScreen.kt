@@ -53,6 +53,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.lonerxone.siphon.data.db.entity.DownloadItem
 import com.lonerxone.siphon.data.db.entity.DownloadStatus
 import com.lonerxone.siphon.data.network.NetworkState
+import com.lonerxone.siphon.ui.components.MediaThumbnail
 import com.lonerxone.siphon.ui.components.SiphonCard
 import com.lonerxone.siphon.ui.components.SiphonPrimaryButton
 import com.lonerxone.siphon.ui.components.SiphonSecondaryButton
@@ -270,6 +271,15 @@ fun WaitlistCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            MediaThumbnail(
+                item = item,
+                modifier = Modifier
+                    .size(width = 76.dp, height = 48.dp)
+                    .clip(RoundedCornerShape(10.dp))
+            )
+
+            Spacer(modifier = Modifier.width(12.dp))
+
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = item.title,

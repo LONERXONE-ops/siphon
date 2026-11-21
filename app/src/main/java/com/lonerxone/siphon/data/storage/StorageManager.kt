@@ -15,6 +15,11 @@ interface StorageManager {
     fun checkStorageStatus(requiredBytes: Long): StorageStatus
     fun getStagingDirectory(): File
     fun isSdCardMounted(): Boolean
+    suspend fun saveToPhoneStorage(
+        stagingFile: File,
+        subfolderName: String? = null
+    ): Result<Uri> = Result.failure(UnsupportedOperationException("Not supported"))
+
     suspend fun moveToTargetSaf(
         stagingFile: File,
         targetTreeUri: Uri,

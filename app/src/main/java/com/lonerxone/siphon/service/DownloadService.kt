@@ -127,7 +127,7 @@ class DownloadService : Service() {
                     // Transition to MOVING state
                     downloadDao.updateStatus(downloadId, DownloadStatus.MOVING, pausedByUser = false)
 
-                    val targetUriStr = prefs.sdFolderUri
+                    val targetUriStr = prefs.sdFolderUri ?: "siphon://phone"
                     if (targetUriStr != null) {
                         val targetUri = Uri.parse(targetUriStr)
                         val subfolder = if (prefs.subfolderOrganizeMode == "BY_SITE") item.site else null
@@ -155,7 +155,7 @@ class DownloadService : Service() {
                                     downloadId,
                                     DownloadStatus.FAILED,
                                     pausedByUser = false,
-                                    errorMessage = "Move to SD card failed: ${err.message}"
+                                    errorMessage = "Could not save the file: ${err.message}"
                                 )
                             }
                         )
@@ -210,6 +210,7 @@ class DownloadService : Service() {
             activeJobs[downloadId]?.cancel()
             activeJobs.remove(downloadId)
             downloadDao.deleteById(downloadId)
+            File(storageManager.getStagingDirectory(), downloadId).deleteRecursively()
             checkAllJobsFinished()
         }
     }
