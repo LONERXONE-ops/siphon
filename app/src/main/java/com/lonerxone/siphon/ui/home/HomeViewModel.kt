@@ -51,7 +51,7 @@ class HomeViewModel @Inject constructor(
                     it.status == DownloadStatus.PAUSED_NO_STORAGE
                 )
         }
-        (active + startedPaused).sortedBy { it.position }
+        (active + startedPaused).distinctBy { it.id }.sortedBy { it.position }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val failedDownloads: StateFlow<List<DownloadItem>> = repository.allDownloads

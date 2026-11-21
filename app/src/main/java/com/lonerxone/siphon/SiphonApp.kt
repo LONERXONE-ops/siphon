@@ -1,6 +1,10 @@
 package com.lonerxone.siphon
 
 import android.app.Application
+import android.content.ContentValues
+import android.content.Context
+import android.os.Environment
+import android.provider.MediaStore
 import android.net.ConnectivityManager
 import android.util.Log
 import coil.ImageLoader
@@ -23,6 +27,34 @@ class SiphonApp : Application(), ImageLoaderFactory {
 
     @Inject lateinit var downloadDao: DownloadDao
     @Inject lateinit var scheduler: WaitlistScheduler
+
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base)
+        installCrashLogger()
+    }
+
+    private fun installCrashLogger() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                val trace = Log.getStackTraceString(throwable)
+                saveCrashReport("SIPHON crashed on thread ${thread.name}\n\n$trace")
+            } catch (e: Throwable) {
+            }
+            previous?.uncaughtException(thread, throwable)
+        }
+    }
+
+    private fun saveCrashReport(text: String) {
+        val resolver = contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "siphon-crash.txt")
+            put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/SIPHON")
+        }
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return
+        resolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
+    }
 
     override fun onCreate() {
         super.onCreate()
