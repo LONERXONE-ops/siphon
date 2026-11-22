@@ -1,6 +1,5 @@
 package com.lonerxone.siphon.ui.settings
 
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -8,6 +7,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.CircularProgressIndicator
@@ -22,14 +22,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.lonerxone.siphon.BuildConfig
-import com.lonerxone.siphon.ui.components.SiphonCard
+import com.lonerxone.siphon.data.update.UpdateUiState
+import com.lonerxone.siphon.ui.components.ExpandableCard
 import com.lonerxone.siphon.ui.components.SiphonPrimaryButton
 import com.lonerxone.siphon.ui.components.SiphonSecondaryButton
+import com.lonerxone.siphon.ui.components.formatFileSize
 import com.lonerxone.siphon.ui.theme.AccentError
 import com.lonerxone.siphon.ui.theme.AccentSuccess
 import com.lonerxone.siphon.ui.theme.AccentWarning
@@ -43,38 +44,43 @@ fun UpdateSection(viewModel: UpdateViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsState()
     var confirmedMobile by remember { mutableStateOf(false) }
 
-    Text(
-        text = "APP UPDATES",
-        fontSize = 12.sp,
-        fontWeight = FontWeight.Bold,
-        color = TextSecondary
-    )
-    Spacer(modifier = Modifier.height(8.dp))
+    val status = when (val s = state) {
+        UpdateUiState.Idle, UpdateUiState.Checking -> "Checking for updates..."
+        is UpdateUiState.UpToDate -> "You're on the latest version"
+        is UpdateUiState.Available -> "Update available: build ${s.buildNumber}"
+        is UpdateUiState.Downloading -> "Downloading update... ${s.percent}%"
+        is UpdateUiState.ReadyToInstall -> "Update ready to install"
+        is UpdateUiState.NeedsPermission -> "Allow installs to continue"
+        is UpdateUiState.Error -> "Couldn't check for updates"
+    }
+    val statusColor = when (state) {
+        is UpdateUiState.UpToDate, is UpdateUiState.ReadyToInstall -> AccentSuccess
+        is UpdateUiState.Available, is UpdateUiState.NeedsPermission -> AccentWarning
+        is UpdateUiState.Error -> AccentError
+        else -> TextSecondary
+    }
+    val icon = when (state) {
+        is UpdateUiState.UpToDate -> Icons.Default.CheckCircle
+        else -> Icons.Default.SystemUpdate
+    }
+    val iconTint = when (state) {
+        is UpdateUiState.UpToDate -> AccentSuccess
+        else -> TextPrimary
+    }
 
-    SiphonCard(modifier = Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                Icons.Default.SystemUpdate,
-                contentDescription = null,
-                tint = PrimaryGradientStart,
-                modifier = Modifier.size(22.dp)
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Column {
-                Text(
-                    text = "SIPHON v${BuildConfig.VERSION_NAME}",
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp,
-                    color = TextPrimary
-                )
-                Text(
-                    text = "Build ${BuildConfig.VERSION_CODE}",
-                    fontSize = 12.sp,
-                    color = TextSecondary
-                )
-            }
-        }
-
+    ExpandableCard(
+        title = "App updates",
+        icon = icon,
+        iconTint = iconTint,
+        initiallyExpanded = false,
+        status = status,
+        statusColor = statusColor
+    ) {
+        Text(
+            text = "SIPHON v${BuildConfig.VERSION_NAME}  •  Build ${BuildConfig.VERSION_CODE}",
+            fontSize = 12.sp,
+            color = TextSecondary
+        )
         Spacer(modifier = Modifier.height(14.dp))
 
         when (val s = state) {
@@ -91,26 +97,17 @@ fun UpdateSection(viewModel: UpdateViewModel = hiltViewModel()) {
             }
 
             is UpdateUiState.UpToDate -> {
-                Text("You're on the latest version.", fontSize = 13.sp, color = AccentSuccess)
-                Spacer(modifier = Modifier.height(12.dp))
                 SiphonSecondaryButton(
                     text = "Check again",
-                    onClick = { viewModel.checkForUpdate() },
+                    onClick = { viewModel.check() },
                     modifier = Modifier.fillMaxWidth(),
                     icon = { Icon(Icons.Default.Refresh, contentDescription = null, tint = TextPrimary) }
                 )
             }
 
             is UpdateUiState.Available -> {
-                val mb = s.sizeBytes / (1024.0 * 1024.0)
                 Text(
-                    text = "Update available: build ${s.buildNumber}",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = TextPrimary
-                )
-                Text(
-                    text = String.format("%.1f MB download", mb),
+                    text = "${formatFileSize(s.sizeBytes)} download",
                     fontSize = 12.sp,
                     color = TextSecondary
                 )
@@ -133,7 +130,7 @@ fun UpdateSection(viewModel: UpdateViewModel = hiltViewModel()) {
                         if (s.metered && !confirmedMobile) {
                             confirmedMobile = true
                         } else {
-                            viewModel.downloadUpdate()
+                            viewModel.download()
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
@@ -141,12 +138,6 @@ fun UpdateSection(viewModel: UpdateViewModel = hiltViewModel()) {
             }
 
             is UpdateUiState.Downloading -> {
-                Text(
-                    text = "Downloading update... ${s.percent}%",
-                    fontSize = 13.sp,
-                    color = TextPrimary
-                )
-                Spacer(modifier = Modifier.height(10.dp))
                 LinearProgressIndicator(
                     progress = { s.percent / 100f },
                     modifier = Modifier.fillMaxWidth(),
@@ -156,11 +147,11 @@ fun UpdateSection(viewModel: UpdateViewModel = hiltViewModel()) {
             }
 
             is UpdateUiState.ReadyToInstall -> {
-                Text("Update downloaded and ready.", fontSize = 13.sp, color = AccentSuccess)
+                Text("The update is downloaded and ready.", fontSize = 12.sp, color = AccentSuccess)
                 Spacer(modifier = Modifier.height(12.dp))
                 SiphonPrimaryButton(
                     text = "Install update",
-                    onClick = { viewModel.installUpdate(s.path) },
+                    onClick = { viewModel.install() },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -174,23 +165,23 @@ fun UpdateSection(viewModel: UpdateViewModel = hiltViewModel()) {
                 Spacer(modifier = Modifier.height(12.dp))
                 SiphonPrimaryButton(
                     text = "Install update",
-                    onClick = { viewModel.installUpdate(s.path) },
+                    onClick = { viewModel.install() },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
 
             is UpdateUiState.Error -> {
                 Text(text = s.message, fontSize = 12.sp, color = AccentError)
+                Spacer(modifier = Modifier.height(12.dp))
+                SiphonSecondaryButton(
+                    text = "Try again",
+                    onClick = { viewModel.check() },
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Spacer(modifier = Modifier.height(8.dp))
                 SiphonSecondaryButton(
                     text = "Open in browser",
                     onClick = { viewModel.openReleasePage() },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                SiphonSecondaryButton(
-                    text = "Try again",
-                    onClick = { viewModel.checkForUpdate() },
                     modifier = Modifier.fillMaxWidth()
                 )
             }

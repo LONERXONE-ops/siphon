@@ -9,6 +9,7 @@ import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,21 +23,26 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -49,16 +55,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.lonerxone.siphon.data.db.entity.DownloadItem
+import com.lonerxone.siphon.data.update.UpdateUiState
+import com.lonerxone.siphon.ui.components.BrandMark
 import com.lonerxone.siphon.ui.components.MediaThumbnail
+import com.lonerxone.siphon.ui.components.NetworkIndicator
 import com.lonerxone.siphon.ui.components.SiphonCard
 import com.lonerxone.siphon.ui.components.SiphonPrimaryButton
 import com.lonerxone.siphon.ui.components.SiphonSecondaryButton
@@ -69,13 +82,13 @@ import com.lonerxone.siphon.ui.components.openMedia
 import com.lonerxone.siphon.ui.home.components.ActiveDownloadCard
 import com.lonerxone.siphon.ui.home.components.AddLinkBottomSheet
 import com.lonerxone.siphon.ui.theme.AccentError
-import com.lonerxone.siphon.ui.theme.AccentSuccess
 import com.lonerxone.siphon.ui.theme.AccentWarning
 import com.lonerxone.siphon.ui.theme.DarkBackground
 import com.lonerxone.siphon.ui.theme.DarkBorder
 import com.lonerxone.siphon.ui.theme.DarkElevated
 import com.lonerxone.siphon.ui.theme.DarkSurface
-import com.lonerxone.siphon.ui.theme.PrimaryGradientStart
+import com.lonerxone.siphon.ui.theme.OnAccent
+import com.lonerxone.siphon.ui.theme.SiphonPrimaryGradient
 import com.lonerxone.siphon.ui.theme.TextMuted
 import com.lonerxone.siphon.ui.theme.TextPrimary
 import com.lonerxone.siphon.ui.theme.TextSecondary
@@ -83,7 +96,8 @@ import com.lonerxone.siphon.ui.theme.TextSecondary
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
-    sharedUrl: String? = null
+    sharedUrl: String? = null,
+    onOpenBrowser: () -> Unit = {}
 ) {
     val activeDownloads by viewModel.activeDownloads.collectAsState()
     val failedDownloads by viewModel.failedDownloads.collectAsState()
@@ -91,6 +105,7 @@ fun HomeScreen(
     val addSheetState by viewModel.addSheetState.collectAsState()
     val engineUpdating by viewModel.engineUpdating.collectAsState()
     val networkState by viewModel.networkState.collectAsState()
+    val updateState by viewModel.updateState.collectAsState()
     val context = LocalContext.current
 
     var urlInput by remember { mutableStateOf("") }
@@ -101,15 +116,15 @@ fun HomeScreen(
     val showBatteryCard = !batteryCardDismissed &&
         !powerManager.isIgnoringBatteryOptimizations(context.packageName)
 
-    LaunchedEffect(Unit) {
+    // Look at the clipboard every time the user comes back to the app
+    LifecycleResumeEffect(Unit) {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val clipData = clipboard.primaryClip
         if (clipData != null && clipData.itemCount > 0) {
             val text = clipData.getItemAt(0).text?.toString() ?: ""
-            if (text.startsWith("http://") || text.startsWith("https://")) {
-                clipboardUrl = text
-            }
+            clipboardUrl = if (text.startsWith("http://") || text.startsWith("https://")) text else null
         }
+        onPauseOrDispose { }
     }
 
     LaunchedEffect(sharedUrl) {
@@ -130,36 +145,45 @@ fun HomeScreen(
                 .padding(horizontal = 16.dp)
         ) {
             item {
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(22.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text(
-                            text = "SIPHON",
-                            fontSize = 26.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 3.sp,
-                            color = TextPrimary
-                        )
-                        Text(
-                            text = "Download anything",
-                            fontSize = 12.sp,
-                            color = TextSecondary
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        BrandMark(boxSize = 46.dp)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "SIPHON",
+                                fontSize = 21.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 4.sp,
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = "Download anything",
+                                fontSize = 11.sp,
+                                color = TextSecondary
+                            )
+                        }
                     }
                     NetworkPill(isWifi = networkState.isWifi)
                 }
 
                 Spacer(modifier = Modifier.height(22.dp))
 
-                LinkInputCard(
+                UpdateBanner(
+                    state = updateState,
+                    onDownload = { viewModel.downloadUpdate() },
+                    onInstall = { viewModel.installUpdate() }
+                )
+
+                LinkOmnibox(
                     urlInput = urlInput,
                     onUrlChange = { urlInput = it },
-                    clipboardUrl = clipboardUrl,
                     onPaste = {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         val text = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
@@ -167,17 +191,43 @@ fun HomeScreen(
                     },
                     onInspect = {
                         if (urlInput.isNotBlank()) viewModel.fetchLinkInfo(urlInput.trim())
-                    },
-                    onUseClipboard = {
-                        clipboardUrl?.let {
-                            urlInput = it
-                            viewModel.fetchLinkInfo(it)
-                        }
                     }
                 )
 
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (!clipboardUrl.isNullOrBlank() && urlInput != clipboardUrl) {
+                        ActionChip(
+                            icon = Icons.Default.ContentPaste,
+                            label = "Use link from clipboard",
+                            onClick = {
+                                clipboardUrl?.let {
+                                    urlInput = it
+                                    viewModel.fetchLinkInfo(it)
+                                }
+                            }
+                        )
+                    }
+                    ActionChip(
+                        icon = Icons.Default.Language,
+                        label = "Find media in the browser",
+                        onClick = onOpenBrowser
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Video  •  Audio  •  Images  •  Files",
+                    fontSize = 11.sp,
+                    color = TextMuted
+                )
+
                 if (showBatteryCard) {
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
                     BackgroundAccessCard(
                         onAllow = {
                             try {
@@ -203,7 +253,7 @@ fun HomeScreen(
                     EmptyStateCard(
                         icon = Icons.Default.Download,
                         title = "Nothing downloading",
-                        subtitle = "Paste a link above, or open the Browser tab to find media on any site."
+                        subtitle = "Paste a link above, or use the browser to find media on any site."
                     )
                 }
             } else {
@@ -288,18 +338,13 @@ private fun NetworkPill(isWifi: Boolean) {
             .clip(RoundedCornerShape(20.dp))
             .background(DarkSurface)
             .border(1.dp, DarkBorder, RoundedCornerShape(20.dp))
-            .padding(horizontal = 12.dp, vertical = 7.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .size(7.dp)
-                .clip(CircleShape)
-                .background(if (isWifi) AccentSuccess else AccentWarning)
-        )
+        NetworkIndicator(isWifi = isWifi, iconSize = 18.dp)
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = if (isWifi) "Wi-Fi" else "No Wi-Fi",
+            text = if (isWifi) "Wi-Fi" else "Mobile data",
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
             color = TextPrimary
@@ -308,115 +353,176 @@ private fun NetworkPill(isWifi: Boolean) {
 }
 
 @Composable
-private fun LinkInputCard(
+private fun LinkOmnibox(
     urlInput: String,
     onUrlChange: (String) -> Unit,
-    clipboardUrl: String?,
     onPaste: () -> Unit,
-    onInspect: () -> Unit,
-    onUseClipboard: () -> Unit
+    onInspect: () -> Unit
 ) {
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(32.dp))
             .background(DarkSurface)
-            .border(1.dp, DarkBorder, RoundedCornerShape(24.dp))
-            .padding(16.dp)
+            .border(1.dp, DarkBorder, RoundedCornerShape(32.dp))
+            .padding(start = 18.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = "Paste a link",
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = TextPrimary
+        Icon(
+            imageVector = Icons.Default.Link,
+            contentDescription = null,
+            tint = TextSecondary,
+            modifier = Modifier.size(20.dp)
         )
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = "Videos, music, images and files from almost any site.",
-            fontSize = 12.sp,
-            color = TextSecondary
-        )
+        Spacer(modifier = Modifier.width(12.dp))
 
-        Spacer(modifier = Modifier.height(14.dp))
-
-        OutlinedTextField(
+        BasicTextField(
             value = urlInput,
             onValueChange = onUrlChange,
-            placeholder = { Text("https://...", color = TextMuted) },
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = DarkBackground,
-                unfocusedContainerColor = DarkBackground,
-                focusedBorderColor = TextSecondary,
-                unfocusedBorderColor = DarkBorder,
-                focusedTextColor = TextPrimary,
-                unfocusedTextColor = TextPrimary,
-                cursorColor = TextPrimary
-            ),
-            trailingIcon = {
-                IconButton(
-                    onClick = {
-                        if (urlInput.isBlank()) onPaste() else onUrlChange("")
-                    }
-                ) {
-                    Icon(
-                        imageVector = if (urlInput.isBlank()) Icons.Default.ContentPaste else Icons.Default.Close,
-                        contentDescription = if (urlInput.isBlank()) "Paste" else "Clear",
-                        tint = TextSecondary
-                    )
-                }
-            },
             singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-            keyboardActions = KeyboardActions(onGo = { onInspect() })
+            textStyle = TextStyle(color = TextPrimary, fontSize = 15.sp),
+            cursorBrush = SolidColor(TextPrimary),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, keyboardType = KeyboardType.Uri),
+            keyboardActions = KeyboardActions(onGo = { onInspect() }),
+            modifier = Modifier.weight(1f),
+            decorationBox = { inner ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (urlInput.isEmpty()) {
+                        Text(
+                            text = "Paste a link to download",
+                            color = TextMuted,
+                            fontSize = 15.sp,
+                            maxLines = 1
+                        )
+                    }
+                    inner()
+                }
+            }
         )
 
-        if (!clipboardUrl.isNullOrBlank() && urlInput != clipboardUrl) {
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(DarkElevated)
-                    .clickable(onClick = onUseClipboard)
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ContentPaste,
-                    contentDescription = null,
-                    tint = TextPrimary,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(text = "Link in clipboard", fontSize = 11.sp, color = TextSecondary)
-                    Text(
-                        text = clipboardUrl,
-                        fontSize = 12.sp,
-                        color = TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+        IconButton(
+            onClick = { if (urlInput.isBlank()) onPaste() else onUrlChange("") },
+            modifier = Modifier.size(40.dp)
+        ) {
+            Icon(
+                imageVector = if (urlInput.isBlank()) Icons.Default.ContentPaste else Icons.Default.Close,
+                contentDescription = if (urlInput.isBlank()) "Paste" else "Clear",
+                tint = TextSecondary,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.width(4.dp))
+
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(SiphonPrimaryGradient)
+                .clickable(onClick = onInspect),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = "Inspect link",
+                tint = OnAccent,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActionChip(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(DarkSurface)
+            .border(1.dp, DarkBorder, RoundedCornerShape(20.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = TextPrimary,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = TextPrimary
+        )
+    }
+}
+
+@Composable
+private fun UpdateBanner(
+    state: UpdateUiState,
+    onDownload: () -> Unit,
+    onInstall: () -> Unit
+) {
+    val show = state is UpdateUiState.Available ||
+        state is UpdateUiState.Downloading ||
+        state is UpdateUiState.ReadyToInstall ||
+        state is UpdateUiState.NeedsPermission
+    if (!show) return
+
+    SiphonCard(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Default.SystemUpdate,
+                contentDescription = null,
+                tint = TextPrimary,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                when (state) {
+                    is UpdateUiState.Downloading -> {
+                        Text("Downloading update", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                        Text("${state.percent}%", fontSize = 12.sp, color = TextSecondary)
+                    }
+                    is UpdateUiState.Available -> {
+                        Text("Update available", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                        Text("Build ${state.buildNumber}  •  ${formatFileSize(state.sizeBytes)}", fontSize = 12.sp, color = TextSecondary)
+                    }
+                    else -> {
+                        Text("Update ready", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                        Text("Tap install to get the newest version.", fontSize = 12.sp, color = TextSecondary)
+                    }
                 }
-                Text(
-                    text = "USE",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimary
-                )
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
-
-        SiphonPrimaryButton(
-            text = "Inspect link",
-            onClick = onInspect,
-            modifier = Modifier.fillMaxWidth()
-        )
+        if (state is UpdateUiState.Downloading) {
+            Spacer(modifier = Modifier.height(12.dp))
+            LinearProgressIndicator(
+                progress = { state.percent / 100f },
+                modifier = Modifier.fillMaxWidth(),
+                color = TextPrimary,
+                trackColor = DarkElevated
+            )
+        } else if (state is UpdateUiState.Available) {
+            Spacer(modifier = Modifier.height(12.dp))
+            SiphonSecondaryButton(
+                text = if (state.metered) "Download (uses mobile data)" else "Download",
+                onClick = onDownload,
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else {
+            Spacer(modifier = Modifier.height(12.dp))
+            SiphonPrimaryButton(
+                text = "Install update",
+                onClick = onInstall,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
     }
+    Spacer(modifier = Modifier.height(14.dp))
 }
 
 @Composable

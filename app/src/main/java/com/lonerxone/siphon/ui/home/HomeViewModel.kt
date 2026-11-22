@@ -11,6 +11,8 @@ import com.lonerxone.siphon.data.engine.model.MediaMetadata
 import com.lonerxone.siphon.data.network.NetworkMonitor
 import com.lonerxone.siphon.data.network.NetworkState
 import com.lonerxone.siphon.data.repository.DownloadRepository
+import com.lonerxone.siphon.data.update.UpdateManager
+import com.lonerxone.siphon.data.update.UpdateUiState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -35,7 +37,8 @@ sealed interface AddSheetUiState {
 class HomeViewModel @Inject constructor(
     private val repository: DownloadRepository,
     private val networkMonitor: NetworkMonitor,
-    private val preferencesRepository: UserPreferencesRepository
+    private val preferencesRepository: UserPreferencesRepository,
+    private val updateManager: UpdateManager
 ) : ViewModel() {
 
     val activeDownloads: StateFlow<List<DownloadItem>> = combine(
@@ -67,6 +70,8 @@ class HomeViewModel @Inject constructor(
 
     private val _engineUpdating = MutableStateFlow(false)
     val engineUpdating: StateFlow<Boolean> = _engineUpdating.asStateFlow()
+
+    val updateState: StateFlow<UpdateUiState> = updateManager.state
 
     fun fetchLinkInfo(url: String) {
         if (url.isBlank()) return
@@ -269,6 +274,14 @@ class HomeViewModel @Inject constructor(
                 _engineUpdating.value = false
             }
         }
+    }
+
+    fun downloadUpdate() {
+        updateManager.download()
+    }
+
+    fun installUpdate() {
+        updateManager.install()
     }
 
     fun dismissSheet() {

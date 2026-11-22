@@ -60,6 +60,7 @@ import com.lonerxone.siphon.ui.components.SiphonCard
 import com.lonerxone.siphon.ui.components.describeSaveLocation
 import com.lonerxone.siphon.ui.components.formatFileSize
 import com.lonerxone.siphon.ui.components.mediaKindOf
+import com.lonerxone.siphon.ui.components.openImages
 import com.lonerxone.siphon.ui.components.openMedia
 import com.lonerxone.siphon.ui.components.shareMedia
 import com.lonerxone.siphon.ui.theme.AccentError
@@ -111,7 +112,7 @@ fun LibraryScreen(
                             color = TextPrimary
                         )
                         Text(
-                            text = "${items.size} files",
+                            text = "${items.size} files  •  ${formatFileSize(items.sumOf { maxOf(it.totalBytes, it.bytesDownloaded) })}",
                             fontSize = 12.sp,
                             color = TextSecondary
                         )
@@ -191,7 +192,24 @@ fun LibraryScreen(
                 items(items, key = { it.id }) { item ->
                     LibraryTile(
                         item = item,
-                        onOpen = { item.finalUri?.let { openMedia(context, it, item.title) } },
+                        onOpen = {
+                            val uri = item.finalUri
+                            if (uri != null) {
+                                if (mediaKindOf(item.formatLabel, item.title) == "IMAGE") {
+                                    val images = items.filter {
+                                        mediaKindOf(it.formatLabel, it.title) == "IMAGE" && it.finalUri != null
+                                    }
+                                    openImages(
+                                        context,
+                                        images.map { it.finalUri!! },
+                                        images.map { it.title },
+                                        images.indexOfFirst { it.id == item.id }.coerceAtLeast(0)
+                                    )
+                                } else {
+                                    openMedia(context, uri, item.title)
+                                }
+                            }
+                        },
                         onShare = { item.finalUri?.let { shareMedia(context, it, item.title) } },
                         onDelete = { pendingDelete = item }
                     )

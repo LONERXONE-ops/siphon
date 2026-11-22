@@ -1,10 +1,5 @@
 package com.lonerxone.siphon.ui.waitlist
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,7 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -44,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -54,12 +50,12 @@ import com.lonerxone.siphon.data.db.entity.DownloadStatus
 import com.lonerxone.siphon.data.network.NetworkState
 import com.lonerxone.siphon.ui.components.CircleActionButton
 import com.lonerxone.siphon.ui.components.MediaThumbnail
+import com.lonerxone.siphon.ui.components.NetworkIndicator
 import com.lonerxone.siphon.ui.components.SiphonCard
 import com.lonerxone.siphon.ui.components.SiphonPrimaryButton
 import com.lonerxone.siphon.ui.components.SiphonSecondaryButton
 import com.lonerxone.siphon.ui.components.SiphonStatusChip
 import com.lonerxone.siphon.ui.components.formatFileSize
-import com.lonerxone.siphon.ui.theme.AccentSuccess
 import com.lonerxone.siphon.ui.theme.AccentWarning
 import com.lonerxone.siphon.ui.theme.DarkBackground
 import com.lonerxone.siphon.ui.theme.DarkBorder
@@ -181,15 +177,17 @@ fun WaitlistScreen(
                             Text(
                                 "Choose Download later on any link and it starts by itself on Wi-Fi.",
                                 color = TextSecondary,
-                                fontSize = 12.sp
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 16.dp)
                             )
                         }
                     }
                 }
             } else {
-                items(shown, key = { it.id }) { item ->
+                itemsIndexed(shown, key = { _, it -> it.id }) { index, item ->
                     WaitlistCard(
                         item = item,
+                        position = index + 1,
                         onStartNow = { viewModel.startNow(item) },
                         onPauseToggle = {
                             if (item.status == DownloadStatus.PAUSED_BY_USER) {
@@ -246,30 +244,25 @@ fun StatusBanner(
     activeCount: Int,
     waitlistCount: Int
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val alphaAnim by infiniteTransition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1100),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulseAlpha"
-    )
-
-    val (title, subtitle, dotColor) = when {
-        activeCount > 0 -> Triple("Downloading $activeCount", "Working through your list on Wi-Fi.", AccentSuccess)
-        networkState.isUsableForDownload -> Triple(
-            "Wi-Fi connected",
-            if (waitlistCount > 0) "Starting your waitlist..." else "New waitlist items start right away.",
-            AccentSuccess
-        )
-        networkState.isMetered && !networkState.isWifi -> Triple(
-            "On mobile data",
-            "Waitlist downloads wait for Wi-Fi.",
-            AccentWarning
-        )
-        else -> Triple("Waiting for Wi-Fi", "Downloads start automatically when you connect.", TextSecondary)
+    val title: String
+    val subtitle: String
+    when {
+        activeCount > 0 -> {
+            title = "Downloading $activeCount"
+            subtitle = "Working through your list."
+        }
+        networkState.isUsableForDownload -> {
+            title = "Wi-Fi connected"
+            subtitle = if (waitlistCount > 0) "Starting your waitlist..." else "New waitlist items start right away."
+        }
+        networkState.isMetered && !networkState.isWifi -> {
+            title = "On mobile data"
+            subtitle = "Waitlist downloads wait for Wi-Fi."
+        }
+        else -> {
+            title = "Waiting for Wi-Fi"
+            subtitle = "Downloads start automatically when you connect."
+        }
     }
 
     Row(
@@ -281,12 +274,7 @@ fun StatusBanner(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .size(10.dp)
-                .clip(CircleShape)
-                .background(dotColor.copy(alpha = alphaAnim))
-        )
+        NetworkIndicator(isWifi = networkState.isWifi, iconSize = 26.dp)
 
         Spacer(modifier = Modifier.width(14.dp))
 
@@ -309,6 +297,7 @@ fun StatusBanner(
 @Composable
 fun WaitlistCard(
     item: DownloadItem,
+    position: Int,
     onStartNow: () -> Unit,
     onPauseToggle: () -> Unit,
     onRemove: () -> Unit
@@ -317,12 +306,28 @@ fun WaitlistCard(
 
     SiphonCard(modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            MediaThumbnail(
-                item = item,
+            Box(
                 modifier = Modifier
                     .size(width = 96.dp, height = 60.dp)
                     .clip(RoundedCornerShape(12.dp))
-            )
+            ) {
+                MediaThumbnail(item = item, modifier = Modifier.fillMaxSize())
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(5.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.7f))
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "#$position",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.width(12.dp))
 

@@ -11,6 +11,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,7 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -48,6 +49,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -59,9 +61,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -75,6 +75,7 @@ import com.lonerxone.siphon.data.engine.RequestHeaderRegistry
 import com.lonerxone.siphon.data.engine.model.MediaFormat
 import com.lonerxone.siphon.data.engine.model.MediaMetadata
 import com.lonerxone.siphon.ui.components.CircleActionButton
+import com.lonerxone.siphon.ui.components.SiphonCard
 import com.lonerxone.siphon.ui.components.SiphonSecondaryButton
 import com.lonerxone.siphon.ui.home.HomeViewModel
 import com.lonerxone.siphon.ui.home.components.AddLinkBottomSheet
@@ -87,6 +88,7 @@ import com.lonerxone.siphon.ui.theme.PrimaryGradientStart
 import com.lonerxone.siphon.ui.theme.TextMuted
 import com.lonerxone.siphon.ui.theme.TextPrimary
 import com.lonerxone.siphon.ui.theme.TextSecondary
+import kotlinx.coroutines.delay
 import org.json.JSONTokener
 
 private data class SniffedMedia(val url: String, val kind: String, val referer: String)
@@ -108,6 +110,17 @@ private val SCAN_JS = """
   return out.join('\n');
 })();
 """
+
+private val QUICK_SITES = listOf(
+    "YouTube" to "https://m.youtube.com",
+    "TikTok" to "https://www.tiktok.com",
+    "X" to "https://x.com",
+    "Instagram" to "https://www.instagram.com",
+    "Facebook" to "https://m.facebook.com",
+    "Reddit" to "https://www.reddit.com",
+    "Pinterest" to "https://www.pinterest.com",
+    "Vimeo" to "https://vimeo.com"
+)
 
 private fun classify(url: String): String? {
     val lower = url.substringBefore("#").lowercase()
@@ -163,17 +176,31 @@ private fun kindLabel(kind: String): String = when (kind) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BrowserScreen(viewModel: HomeViewModel = hiltViewModel()) {
+fun BrowserScreen(
+    visible: Boolean,
+    onOpenDownloads: () -> Unit,
+    viewModel: HomeViewModel = hiltViewModel()
+) {
     val addSheetState by viewModel.addSheetState.collectAsState()
+    val networkState by viewModel.networkState.collectAsState()
 
-    var currentUrl by rememberSaveable { mutableStateOf("https://www.google.com") }
+    var showStart by rememberSaveable { mutableStateOf(true) }
+    var currentUrl by rememberSaveable { mutableStateOf("") }
     var urlText by rememberSaveable { mutableStateOf("") }
     var progress by remember { mutableIntStateOf(100) }
     var canGoBack by remember { mutableStateOf(false) }
     var pageTitle by remember { mutableStateOf("") }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var showFound by remember { mutableStateOf(false) }
+    var toast by remember { mutableStateOf<String?>(null) }
     val found = remember { mutableStateListOf<SniffedMedia>() }
+
+    fun openUrl(raw: String) {
+        val target = normalizeInput(raw)
+        showStart = false
+        urlText = target
+        webViewRef?.loadUrl(target)
+    }
 
     fun addFound(url: String, kind: String, referer: String) {
         if (found.size >= 80) return
@@ -224,173 +251,249 @@ fun BrowserScreen(viewModel: HomeViewModel = hiltViewModel()) {
             isDirectFile = direct
         )
         viewModel.onDownloadNowClicked(meta, format.formatId, format.label)
+        if (networkState.isWifi) toast = "Added to downloads"
     }
 
-    BackHandler(enabled = canGoBack) { webViewRef?.goBack() }
+    BackHandler(enabled = visible && (canGoBack || !showStart)) {
+        if (!showStart && canGoBack) {
+            webViewRef?.goBack()
+        } else {
+            showStart = true
+        }
+    }
+
+    // A hidden browser must not keep playing sound
+    LaunchedEffect(visible, webViewRef) {
+        val view = webViewRef
+        if (view != null) {
+            if (visible) {
+                view.onResume()
+                view.resumeTimers()
+            } else {
+                view.onPause()
+                view.pauseTimers()
+            }
+        }
+    }
+
+    LaunchedEffect(toast) {
+        if (toast != null) {
+            delay(3500)
+            toast = null
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose { webViewRef?.destroy() }
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(DarkBackground)
     ) {
-        Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = urlText,
-                    onValueChange = { urlText = it },
-                    placeholder = { Text("Search or type a link", color = TextMuted) },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
-                    leadingIcon = {
-                        Icon(Icons.Default.Search, contentDescription = null, tint = TextSecondary)
-                    },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = DarkSurface,
-                        unfocusedContainerColor = DarkSurface,
-                        focusedBorderColor = TextSecondary,
-                        unfocusedBorderColor = DarkBorder,
-                        focusedTextColor = TextPrimary,
-                        unfocusedTextColor = TextPrimary,
-                        cursorColor = TextPrimary
-                    ),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, keyboardType = KeyboardType.Uri),
-                    keyboardActions = KeyboardActions(onGo = {
-                        if (urlText.isNotBlank()) webViewRef?.loadUrl(normalizeInput(urlText))
-                    })
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                FoundBadge(count = found.size, onClick = { showFound = true })
+        Column(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = urlText,
+                        onValueChange = { urlText = it },
+                        placeholder = { Text("Search or type a link", color = TextMuted) },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        leadingIcon = {
+                            Icon(Icons.Default.Search, contentDescription = null, tint = TextSecondary)
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = DarkSurface,
+                            unfocusedContainerColor = DarkSurface,
+                            focusedBorderColor = TextSecondary,
+                            unfocusedBorderColor = DarkBorder,
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary,
+                            cursorColor = TextPrimary
+                        ),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, keyboardType = KeyboardType.Uri),
+                        keyboardActions = KeyboardActions(onGo = {
+                            if (urlText.isNotBlank()) openUrl(urlText)
+                        })
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    FoundBadge(count = found.size, onClick = { showFound = true })
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CircleActionButton(
+                        icon = Icons.Default.Home,
+                        description = "Start page",
+                        size = 36.dp,
+                        onClick = { showStart = true }
+                    )
+                    CircleActionButton(
+                        icon = Icons.AutoMirrored.Filled.ArrowBack,
+                        description = "Back",
+                        size = 36.dp,
+                        onClick = { webViewRef?.goBack() }
+                    )
+                    CircleActionButton(
+                        icon = Icons.AutoMirrored.Filled.ArrowForward,
+                        description = "Forward",
+                        size = 36.dp,
+                        onClick = { webViewRef?.goForward() }
+                    )
+                    CircleActionButton(
+                        icon = Icons.Default.Refresh,
+                        description = "Reload",
+                        size = 36.dp,
+                        onClick = { webViewRef?.reload() }
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    SiphonSecondaryButton(
+                        text = "Inspect page",
+                        onClick = {
+                            if (currentUrl.isNotBlank()) viewModel.fetchLinkInfo(currentUrl)
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                CircleActionButton(
-                    icon = Icons.AutoMirrored.Filled.ArrowBack,
-                    description = "Back",
-                    size = 36.dp,
-                    onClick = { webViewRef?.goBack() }
+            if (progress < 100 && !showStart) {
+                LinearProgressIndicator(
+                    progress = { progress / 100f },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp),
+                    color = TextPrimary,
+                    trackColor = DarkBorder
                 )
-                CircleActionButton(
-                    icon = Icons.AutoMirrored.Filled.ArrowForward,
-                    description = "Forward",
-                    size = 36.dp,
-                    onClick = { webViewRef?.goForward() }
-                )
-                CircleActionButton(
-                    icon = Icons.Default.Refresh,
-                    description = "Reload",
-                    size = 36.dp,
-                    onClick = { webViewRef?.reload() }
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                SiphonSecondaryButton(
-                    text = "Inspect page",
-                    onClick = { viewModel.fetchLinkInfo(currentUrl) }
-                )
+            } else {
+                Spacer(modifier = Modifier.height(2.dp))
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-        }
-
-        if (progress < 100) {
-            LinearProgressIndicator(
-                progress = { progress / 100f },
+            Box(
                 modifier = Modifier
+                    .weight(1f)
                     .fillMaxWidth()
-                    .height(2.dp),
-                color = TextPrimary,
-                trackColor = DarkBorder
-            )
-        } else {
-            Spacer(modifier = Modifier.height(2.dp))
-        }
+            ) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            settings.useWideViewPort = true
+                            settings.loadWithOverviewMode = true
+                            settings.allowFileAccess = false
+                            settings.allowContentAccess = false
+                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
 
-        AndroidView(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            factory = { ctx ->
-                WebView(ctx).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.useWideViewPort = true
-                    settings.loadWithOverviewMode = true
-                    settings.allowFileAccess = false
-                    settings.allowContentAccess = false
-                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                            val cookies = CookieManager.getInstance()
+                            cookies.setAcceptCookie(true)
+                            cookies.setAcceptThirdPartyCookies(this, true)
 
-                    val cookies = CookieManager.getInstance()
-                    cookies.setAcceptCookie(true)
-                    cookies.setAcceptThirdPartyCookies(this, true)
+                            webViewClient = object : WebViewClient() {
+                                override fun shouldInterceptRequest(
+                                    view: WebView?,
+                                    request: WebResourceRequest?
+                                ): WebResourceResponse? {
+                                    val url = request?.url?.toString()
+                                    if (url != null && view != null) {
+                                        val kind = classify(url)
+                                        if (kind != null) {
+                                            val referer = request.requestHeaders["Referer"] ?: view.url ?: ""
+                                            view.post { addFound(url, kind, referer) }
+                                        }
+                                    }
+                                    return null
+                                }
 
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldInterceptRequest(
-                            view: WebView?,
-                            request: WebResourceRequest?
-                        ): WebResourceResponse? {
-                            val url = request?.url?.toString()
-                            if (url != null && view != null) {
-                                val kind = classify(url)
-                                if (kind != null) {
-                                    val referer = request.requestHeaders["Referer"] ?: view.url ?: ""
-                                    view.post { addFound(url, kind, referer) }
+                                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                    if (url != null && url != "about:blank") {
+                                        currentUrl = url
+                                        urlText = url
+                                        showStart = false
+                                    }
+                                    found.clear()
+                                }
+
+                                override fun onPageFinished(view: WebView?, url: String?) {
+                                    if (view != null && url != "about:blank") {
+                                        scanPage(view)
+                                        view.postDelayed({ scanPage(view) }, 2500)
+                                    }
+                                }
+
+                                override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                                    canGoBack = view?.canGoBack() == true
                                 }
                             }
-                            return null
-                        }
 
-                        override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                            if (url != null) {
-                                currentUrl = url
-                                urlText = url
+                            webChromeClient = object : WebChromeClient() {
+                                override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                    progress = newProgress
+                                }
+
+                                override fun onReceivedTitle(view: WebView?, title: String?) {
+                                    pageTitle = title ?: ""
+                                }
                             }
-                            found.clear()
-                        }
 
-                        override fun onPageFinished(view: WebView?, url: String?) {
-                            if (view != null) {
-                                scanPage(view)
-                                view.postDelayed({ scanPage(view) }, 2500)
+                            setDownloadListener { url, _, _, _, _ ->
+                                post {
+                                    addFound(url, "FILE", currentUrl)
+                                    showFound = true
+                                }
+                            }
+
+                            webViewRef = this
+                            if (currentUrl.isNotBlank()) {
+                                loadUrl(currentUrl)
                             }
                         }
-
-                        override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
-                            canGoBack = view?.canGoBack() == true
-                        }
                     }
+                )
 
-                    webChromeClient = object : WebChromeClient() {
-                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                            progress = newProgress
-                        }
+                if (showStart) {
+                    StartPage(onOpen = { openUrl(it) })
+                }
 
-                        override fun onReceivedTitle(view: WebView?, title: String?) {
-                            pageTitle = title ?: ""
-                        }
+                val message = toast
+                if (message != null) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(16.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(DarkElevated)
+                            .border(1.dp, DarkBorder, RoundedCornerShape(20.dp))
+                            .clickable {
+                                toast = null
+                                onOpenDownloads()
+                            }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = message, color = TextPrimary, fontSize = 13.sp)
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Text(
+                            text = "VIEW",
+                            color = TextPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
                     }
-
-                    setDownloadListener { url, _, _, _, _ ->
-                        post {
-                            addFound(url, "FILE", currentUrl)
-                            showFound = true
-                        }
-                    }
-
-                    webViewRef = this
-                    loadUrl(currentUrl)
                 }
             }
-        )
+        }
     }
 
     if (showFound) {
@@ -453,13 +556,128 @@ fun BrowserScreen(viewModel: HomeViewModel = hiltViewModel()) {
 }
 
 @Composable
+private fun StartPage(onOpen: (String) -> Unit) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DarkBackground)
+            .padding(horizontal = 16.dp)
+    ) {
+        item {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Browser",
+                fontSize = 26.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = TextPrimary
+            )
+            Text(
+                text = "Find videos, audio and images on any website.",
+                fontSize = 13.sp,
+                color = TextSecondary
+            )
+            Spacer(modifier = Modifier.height(18.dp))
+
+            SiphonCard(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "How it works",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextPrimary
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                StepRow("1", "Open a site and play the video, or scroll the page.")
+                Spacer(modifier = Modifier.height(10.dp))
+                StepRow("2", "SIPHON spots the real media files and shows a count badge next to the address bar.")
+                Spacer(modifier = Modifier.height(10.dp))
+                StepRow("3", "Tap the badge, pick a file and download. SIPHON sends the same cookies the site gave you, so protected media works.")
+                Spacer(modifier = Modifier.height(14.dp))
+                Text(
+                    text = "Tip: for a single video on YouTube, TikTok, X and similar sites, tap Inspect page. It is usually faster.",
+                    fontSize = 12.sp,
+                    color = TextMuted
+                )
+            }
+
+            Spacer(modifier = Modifier.height(22.dp))
+            Text(
+                text = "Quick sites",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = TextPrimary
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        items(QUICK_SITES.chunked(2)) { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                row.forEach { (name, url) ->
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(DarkSurface)
+                            .border(1.dp, DarkBorder, RoundedCornerShape(16.dp))
+                            .clickable { onOpen(url) }
+                            .padding(horizontal = 16.dp, vertical = 16.dp)
+                    ) {
+                        Text(
+                            text = name,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextPrimary
+                        )
+                    }
+                }
+                if (row.size == 1) Spacer(modifier = Modifier.weight(1f))
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(80.dp))
+        }
+    }
+}
+
+@Composable
+private fun StepRow(number: String, text: String) {
+    Row(verticalAlignment = Alignment.Top) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(DarkElevated),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = number,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = TextPrimary
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = text,
+            fontSize = 13.sp,
+            color = TextSecondary,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
 private fun FoundBadge(count: Int, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .size(48.dp)
             .clip(CircleShape)
             .background(if (count > 0) PrimaryGradientStart else DarkElevated)
-            .clickableNoRipple(onClick),
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         if (count > 0) {
@@ -478,10 +696,6 @@ private fun FoundBadge(count: Int, onClick: () -> Unit) {
             )
         }
     }
-}
-
-private fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier {
-    return this.then(Modifier.clickable { onClick() })
 }
 
 @Composable

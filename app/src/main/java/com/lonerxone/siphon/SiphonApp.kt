@@ -13,9 +13,11 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.lonerxone.siphon.data.db.dao.DownloadDao
 import com.lonerxone.siphon.data.repository.WaitlistScheduler
+import com.lonerxone.siphon.data.update.UpdateManager
 import com.yausername.aria2c.Aria2c
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
+import com.yausername.youtubedl_android.YoutubeDLRequest
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +30,7 @@ class SiphonApp : Application(), ImageLoaderFactory {
 
     @Inject lateinit var downloadDao: DownloadDao
     @Inject lateinit var scheduler: WaitlistScheduler
+    @Inject lateinit var updateManager: UpdateManager
 
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
@@ -72,6 +75,8 @@ class SiphonApp : Application(), ImageLoaderFactory {
             try {
                 downloadDao.normalizeStuckDownloads()
                 scheduler.startListening()
+                updateManager.check(autoDownload = true)
+                warmUpEngine()
             } catch (e: Exception) {
                 Log.e("SiphonApp", "Error during startup initialization", e)
             }
@@ -84,6 +89,16 @@ class SiphonApp : Application(), ImageLoaderFactory {
      * Sites change all the time. Keep yt-dlp fresh by updating it in the background
      * (at most every 6 hours, and never on mobile data).
      */
+    private fun warmUpEngine() {
+        // loads Python and yt-dlp into memory once, so the first real link opens faster
+        try {
+            val request = YoutubeDLRequest(emptyList())
+            request.addOption("--version")
+            YoutubeDL.getInstance().execute(request = request, processId = "warmup") { _, _, _ -> }
+        } catch (e: Exception) {
+        }
+    }
+
     private fun autoUpdateEngine() {
         val prefs = getSharedPreferences("siphon_engine", MODE_PRIVATE)
         val last = prefs.getLong("last_update", 0L)

@@ -6,6 +6,7 @@ import android.net.Uri
 import android.webkit.MimeTypeMap
 import android.widget.Toast
 import com.lonerxone.siphon.ui.player.PlayerActivity
+import com.lonerxone.siphon.ui.viewer.ImageViewerActivity
 
 fun formatFileSize(bytes: Long): String {
     if (bytes <= 0L) return "0 MB"
@@ -71,6 +72,11 @@ fun guessMimeType(context: Context, uriString: String, name: String): String {
 fun openMedia(context: Context, uriString: String, name: String) {
     val mime = guessMimeType(context, uriString, name)
 
+    if (mime.startsWith("image/")) {
+        openImages(context, listOf(uriString), listOf(name), 0)
+        return
+    }
+
     if (mime.startsWith("video/") || mime.startsWith("audio/")) {
         try {
             val intent = Intent(context, PlayerActivity::class.java).apply {
@@ -92,6 +98,20 @@ fun openMedia(context: Context, uriString: String, name: String) {
         context.startActivity(Intent.createChooser(intent, "Open with"))
     } catch (e: Exception) {
         Toast.makeText(context, "No app found to open this file", Toast.LENGTH_SHORT).show()
+    }
+}
+
+/** Opens the built-in image viewer. Swipe left and right to move through [uris]. */
+fun openImages(context: Context, uris: List<String>, titles: List<String>, index: Int) {
+    try {
+        val intent = Intent(context, ImageViewerActivity::class.java).apply {
+            putStringArrayListExtra(ImageViewerActivity.EXTRA_URIS, ArrayList(uris))
+            putStringArrayListExtra(ImageViewerActivity.EXTRA_TITLES, ArrayList(titles))
+            putExtra(ImageViewerActivity.EXTRA_INDEX, index)
+        }
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        Toast.makeText(context, "Could not open the image", Toast.LENGTH_SHORT).show()
     }
 }
 
