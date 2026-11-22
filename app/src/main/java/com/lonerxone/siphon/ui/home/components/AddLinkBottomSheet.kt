@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,6 +41,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -73,7 +77,8 @@ fun AddLinkBottomSheet(
     onDismiss: () -> Unit,
     onDownloadNow: (MediaMetadata, String?, String?) -> Unit,
     onDownloadLater: (MediaMetadata, String?, String?) -> Unit,
-    onConfirmMobileData: (MediaMetadata, String?) -> Unit
+    onConfirmMobileData: (MediaMetadata, String?) -> Unit,
+    onDownloadSelected: (MediaMetadata, List<String>, Boolean) -> Unit
 ) {
     if (uiState is AddSheetUiState.Idle) return
 
@@ -123,11 +128,22 @@ fun AddLinkBottomSheet(
                 }
 
                 is AddSheetUiState.MetadataLoaded -> {
-                    MetadataContent(
-                        metadata = uiState.metadata,
-                        onDownloadNow = onDownloadNow,
-                        onDownloadLater = onDownloadLater
-                    )
+                    val metadata = uiState.metadata
+                    val isSelectionMode = metadata.formats.isNotEmpty() && metadata.formats.all {
+                        it.formatId.startsWith("img:") || it.formatId.startsWith("vid:")
+                    }
+                    if (isSelectionMode) {
+                        SelectionContent(
+                            metadata = metadata,
+                            onDownloadSelected = onDownloadSelected
+                        )
+                    } else {
+                        MetadataContent(
+                            metadata = metadata,
+                            onDownloadNow = onDownloadNow,
+                            onDownloadLater = onDownloadLater
+                        )
+                    }
                 }
 
                 is AddSheetUiState.MobileDataWarning -> {
@@ -217,6 +233,151 @@ private fun SkeletonBlock(modifier: Modifier) {
     )
 }
 
+/** Images and videos found on a page: tick the ones you want. */
+@Composable
+private fun SelectionContent(
+    metadata: MediaMetadata,
+    onDownloadSelected: (MediaMetadata, List<String>, Boolean) -> Unit
+) {
+    val allIds = metadata.formats.map { it.formatId }
+    val selected = remember(metadata.url) {
+        mutableStateListOf<String>().apply { allIds.firstOrNull()?.let { add(it) } }
+    }
+
+    Text(
+        text = metadata.title,
+        fontWeight = FontWeight.Bold,
+        fontSize = 16.sp,
+        color = TextPrimary,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        text = "${allIds.size} found on ${metadata.site}",
+        fontSize = 12.sp,
+        color = TextSecondary
+    )
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "${selected.size} selected",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = TextPrimary
+        )
+        Row {
+            TextButton(onClick = {
+                selected.clear()
+                selected.addAll(allIds)
+            }) {
+                Text("Select all", color = TextPrimary, fontSize = 12.sp)
+            }
+            TextButton(onClick = { selected.clear() }) {
+                Text("Clear", color = TextSecondary, fontSize = 12.sp)
+            }
+        }
+    }
+
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(3),
+        modifier = Modifier.heightIn(max = 340.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(metadata.formats, key = { it.formatId }) { format ->
+            val isSelected = selected.contains(format.formatId)
+            val isVideo = format.formatId.startsWith("vid:")
+            val previewUrl = if (isVideo) metadata.thumbnailUrl else format.formatId.substringAfter(":")
+
+            Box(
+                modifier = Modifier
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(DarkElevated)
+                    .border(
+                        width = if (isSelected) 2.dp else 1.dp,
+                        color = if (isSelected) TextPrimary else DarkBorder,
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    .clickable {
+                        if (isSelected) selected.remove(format.formatId) else selected.add(format.formatId)
+                    }
+            ) {
+                if (!previewUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = previewUrl,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                if (isVideo) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.6f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+                if (isSelected) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .size(22.dp)
+                            .clip(CircleShape)
+                            .background(PrimaryGradientStart),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            tint = OnAccent,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        SiphonSecondaryButton(
+            text = "Download later",
+            onClick = { onDownloadSelected(metadata, selected.toList(), true) },
+            enabled = selected.isNotEmpty(),
+            modifier = Modifier.weight(1f)
+        )
+        SiphonPrimaryButton(
+            text = if (selected.isEmpty()) "Download" else "Download ${selected.size}",
+            onClick = { onDownloadSelected(metadata, selected.toList(), false) },
+            enabled = selected.isNotEmpty(),
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
 @Composable
 private fun MetadataContent(
     metadata: MediaMetadata,
@@ -292,7 +453,7 @@ private fun MetadataContent(
     Spacer(modifier = Modifier.height(18.dp))
 
     Text(
-        text = "Choose quality",
+        text = if (metadata.formats.size > 1) "Choose quality" else "Ready to download",
         fontSize = 12.sp,
         fontWeight = FontWeight.SemiBold,
         color = TextSecondary
@@ -309,7 +470,7 @@ private fun MetadataContent(
             QualityRow(
                 format = format,
                 isSelected = format.formatId == selectedId,
-                isBest = index == 0 && !format.isAudioOnly,
+                isBest = index == 0 && !format.isAudioOnly && metadata.formats.size > 1,
                 onClick = { selectedId = format.formatId }
             )
         }
@@ -356,7 +517,7 @@ private fun QualityRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .background(if (isSelected) DarkElevated else Color.Transparent)
-            .border(1.dp, if (isSelected) PrimaryGradientStart else DarkBorder, RoundedCornerShape(14.dp))
+            .border(1.dp, if (isSelected) TextPrimary else DarkBorder, RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,

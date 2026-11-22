@@ -8,6 +8,7 @@ import com.lonerxone.siphon.data.db.entity.DownloadItem
 import com.lonerxone.siphon.data.db.entity.DownloadStatus
 import com.lonerxone.siphon.data.db.entity.EngineType
 import com.lonerxone.siphon.data.engine.DownloadEngineRouter
+import com.lonerxone.siphon.data.engine.PageMediaFinder
 import com.lonerxone.siphon.data.engine.model.MediaMetadata
 import com.lonerxone.siphon.data.network.NetworkMonitor
 import com.lonerxone.siphon.data.storage.StorageManager
@@ -34,7 +35,8 @@ class DownloadRepositoryImpl @Inject constructor(
     private val storageManager: StorageManager,
     private val preferencesRepository: UserPreferencesRepository,
     private val networkMonitor: NetworkMonitor,
-    private val scheduler: WaitlistScheduler
+    private val scheduler: WaitlistScheduler,
+    private val pageMediaFinder: PageMediaFinder
 ) : DownloadRepository {
 
     override val allDownloads: Flow<List<DownloadItem>> = downloadDao.getAllDownloads()
@@ -62,7 +64,12 @@ class DownloadRepositoryImpl @Inject constructor(
     override suspend fun fetchMetadata(url: String): Result<MediaMetadata> {
         // Fetching info is always allowed on any network, including mobile data (PRD 5.1)
         val engine = engineRouter.selectEngine(url)
-        return engine.fetchMetadata(url)
+        val primary = engine.fetchMetadata(url)
+        if (primary.isSuccess) return primary
+
+        // The engine could not read the link: look for images and videos on the page itself
+        val fallback = pageMediaFinder.find(url)
+        return if (fallback.isSuccess) fallback else primary
     }
 
     override suspend fun downloadNow(
@@ -232,6 +239,9 @@ class DownloadRepositoryImpl @Inject constructor(
     override suspend fun deleteDownload(id: String, deleteFile: Boolean) = withContext(Dispatchers.IO) {
         val item = downloadDao.getById(id)
         if (item != null) {
+            if (deleteFile) {
+                deleteFinalFile(item.finalUri)
+            }
             if (deleteFile && item.stagingPath != null) {
                 val f = File(item.stagingPath)
                 if (f.exists()) f.delete()
@@ -256,6 +266,20 @@ class DownloadRepositoryImpl @Inject constructor(
 
     override suspend fun getDownloadById(id: String): DownloadItem? {
         return downloadDao.getById(id)
+    }
+
+    private fun deleteFinalFile(uriString: String?) {
+        if (uriString.isNullOrBlank()) return
+        try {
+            val uri = android.net.Uri.parse(uriString)
+            if (android.provider.DocumentsContract.isDocumentUri(context, uri)) {
+                android.provider.DocumentsContract.deleteDocument(context.contentResolver, uri)
+            } else {
+                context.contentResolver.delete(uri, null, null)
+            }
+        } catch (e: Exception) {
+            // The file may already be gone, or Android refuses to delete a file we do not own
+        }
     }
 
     private fun startDownloadService(downloadId: String) {

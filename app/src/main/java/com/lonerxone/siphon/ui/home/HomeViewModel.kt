@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.lonerxone.siphon.data.datastore.UserPreferencesRepository
 import com.lonerxone.siphon.data.db.entity.DownloadItem
 import com.lonerxone.siphon.data.db.entity.DownloadStatus
+import com.lonerxone.siphon.data.engine.RequestHeaderRegistry
+import com.lonerxone.siphon.data.engine.model.MediaFormat
 import com.lonerxone.siphon.data.engine.model.MediaMetadata
 import com.lonerxone.siphon.data.network.NetworkMonitor
 import com.lonerxone.siphon.data.network.NetworkState
@@ -36,10 +38,6 @@ class HomeViewModel @Inject constructor(
     private val preferencesRepository: UserPreferencesRepository
 ) : ViewModel() {
 
-    /**
-     * Everything the user has actively started: running downloads plus
-     * started downloads that are paused (so Pause keeps the item on Home).
-     */
     val activeDownloads: StateFlow<List<DownloadItem>> = combine(
         repository.activeDownloads,
         repository.waitlistDownloads
@@ -108,12 +106,45 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /** Images and videos picked from a page scan. [later] puts them on the waitlist. */
+    fun onDownloadSelected(metadata: MediaMetadata, ids: List<String>, later: Boolean) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            if (later) {
+                queueSelected(metadata, ids, later = true, mobileApproved = false)
+                return@launch
+            }
+            val net = networkMonitor.getCurrentState()
+            if (!net.isWifi) {
+                _addSheetState.value = AddSheetUiState.MobileDataWarning(
+                    metadata = metadata,
+                    formatId = ids.joinToString("\n"),
+                    sizeFormatted = "${ids.size} file(s)"
+                )
+            } else {
+                queueSelected(metadata, ids, later = false, mobileApproved = false)
+            }
+        }
+    }
+
     fun confirmMobileDataDownload(metadata: MediaMetadata, formatId: String?) {
+        if (isSelectionId(formatId)) {
+            viewModelScope.launch {
+                queueSelected(metadata, formatId!!.split("\n"), later = false, mobileApproved = true)
+            }
+            return
+        }
         val format = metadata.formats.find { it.formatId == formatId } ?: metadata.formats.firstOrNull()
         startDownloadNow(metadata, formatId, format?.label, mobileApproved = true)
     }
 
     fun downloadLater(metadata: MediaMetadata, formatId: String?, formatLabel: String?) {
+        if (isSelectionId(formatId)) {
+            viewModelScope.launch {
+                queueSelected(metadata, formatId!!.split("\n"), later = true, mobileApproved = false)
+            }
+            return
+        }
         viewModelScope.launch {
             try {
                 repository.downloadLater(
@@ -127,6 +158,62 @@ class HomeViewModel @Inject constructor(
                 _addSheetState.value = AddSheetUiState.Error(e.message ?: "Could not add to the waitlist")
             }
         }
+    }
+
+    private fun isSelectionId(id: String?): Boolean {
+        return id != null && (id.startsWith("img:") || id.startsWith("vid:"))
+    }
+
+    private suspend fun queueSelected(
+        metadata: MediaMetadata,
+        ids: List<String>,
+        later: Boolean,
+        mobileApproved: Boolean
+    ) {
+        var failure: String? = null
+        ids.forEachIndexed { index, id ->
+            val url = id.substringAfter(":")
+            val isImage = id.startsWith("img:")
+            val ext = extensionOf(url, if (isImage) "jpg" else "mp4")
+            val label = if (isImage) "Image ($ext)" else "Video ($ext)"
+
+            RequestHeaderRegistry.put(url, mapOf("Referer" to metadata.url), true)
+
+            val item = MediaMetadata(
+                url = url,
+                title = metadata.title.take(70) + if (ids.size > 1) " (${index + 1})" else "",
+                thumbnailUrl = if (isImage) url else metadata.thumbnailUrl,
+                durationSeconds = 0L,
+                site = metadata.site,
+                formats = listOf(MediaFormat(formatId = "direct", label = label, ext = ext, fileSizeApprox = 0L)),
+                isDirectFile = true
+            )
+
+            val result = if (later) {
+                repository.downloadLater(url = url, metadata = item, formatId = "direct", formatLabel = label)
+            } else {
+                repository.downloadNow(
+                    url = url,
+                    metadata = item,
+                    formatId = "direct",
+                    formatLabel = label,
+                    mobileDataApproved = mobileApproved
+                )
+            }
+            if (result.isFailure && failure == null) {
+                failure = result.exceptionOrNull()?.message ?: "Could not start a download"
+            }
+        }
+        _addSheetState.value = if (failure == null) AddSheetUiState.Idle else AddSheetUiState.Error(failure!!)
+    }
+
+    private fun extensionOf(url: String, fallback: String): String {
+        val path = url.substringBefore("?").lowercase()
+        val ext = path.substringAfterLast('.', "")
+        val known = setOf("jpg", "jpeg", "png", "webp", "gif", "avif", "mp4", "webm", "m4v", "mov")
+        if (ext in known) return ext
+        val format = Regex("""format=([a-z0-9]+)""").find(url.lowercase())?.groupValues?.get(1)
+        return if (format != null && format in known) format else fallback
     }
 
     private fun startDownloadNow(

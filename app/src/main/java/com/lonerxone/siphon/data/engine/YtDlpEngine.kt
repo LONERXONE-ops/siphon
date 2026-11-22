@@ -516,6 +516,9 @@ class YtDlpEngine @Inject constructor(
             addOption("--force-ipv4")
             addOption("--add-metadata")
             addOption("--no-mtime")
+            RequestHeaderRegistry.get(request.url)?.forEach { (headerName, headerValue) ->
+                if (headerValue.isNotBlank()) addOption("--add-header", "$headerName:$headerValue")
+            }
 
             if (fid == "audio:mp3") {
                 addOption("-f", "bestaudio/best")
@@ -633,6 +636,8 @@ class YtDlpEngine @Inject constructor(
             msg.contains("Unable to extract", ignoreCase = true) ||
                 msg.contains("ExtractorError", ignoreCase = true) ->
                 "This site changed how it serves videos. SIPHON tried updating its engine. Try the link again in a few minutes."
+            msg.contains("No video could be found", ignoreCase = true) ->
+                "No video was found here, and no downloadable images either. Try opening the page in the Browser tab."
             msg.contains("Sign in to confirm", ignoreCase = true) ||
                 msg.contains("not a bot", ignoreCase = true) ->
                 "This site wants a login or a bot check."

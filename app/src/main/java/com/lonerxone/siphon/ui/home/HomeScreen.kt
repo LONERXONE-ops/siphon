@@ -48,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -63,10 +64,12 @@ import com.lonerxone.siphon.ui.components.SiphonPrimaryButton
 import com.lonerxone.siphon.ui.components.SiphonSecondaryButton
 import com.lonerxone.siphon.ui.components.describeSaveLocation
 import com.lonerxone.siphon.ui.components.formatFileSize
+import com.lonerxone.siphon.ui.components.mediaKindOf
 import com.lonerxone.siphon.ui.components.openMedia
 import com.lonerxone.siphon.ui.home.components.ActiveDownloadCard
 import com.lonerxone.siphon.ui.home.components.AddLinkBottomSheet
 import com.lonerxone.siphon.ui.theme.AccentError
+import com.lonerxone.siphon.ui.theme.AccentSuccess
 import com.lonerxone.siphon.ui.theme.AccentWarning
 import com.lonerxone.siphon.ui.theme.DarkBackground
 import com.lonerxone.siphon.ui.theme.DarkBorder
@@ -87,6 +90,7 @@ fun HomeScreen(
     val recentCompleted by viewModel.recentCompleted.collectAsState()
     val addSheetState by viewModel.addSheetState.collectAsState()
     val engineUpdating by viewModel.engineUpdating.collectAsState()
+    val networkState by viewModel.networkState.collectAsState()
     val context = LocalContext.current
 
     var urlInput by remember { mutableStateOf("") }
@@ -128,18 +132,27 @@ fun HomeScreen(
             item {
                 Spacer(modifier = Modifier.height(24.dp))
 
-                Text(
-                    text = "SIPHON",
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 3.sp,
-                    color = TextPrimary
-                )
-                Text(
-                    text = "Download anything",
-                    fontSize = 12.sp,
-                    color = TextSecondary
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "SIPHON",
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 3.sp,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "Download anything",
+                            fontSize = 12.sp,
+                            color = TextSecondary
+                        )
+                    }
+                    NetworkPill(isWifi = networkState.isWifi)
+                }
 
                 Spacer(modifier = Modifier.height(22.dp))
 
@@ -190,7 +203,7 @@ fun HomeScreen(
                     EmptyStateCard(
                         icon = Icons.Default.Download,
                         title = "Nothing downloading",
-                        subtitle = "Paste a link above to get started."
+                        subtitle = "Paste a link above, or open the Browser tab to find media on any site."
                     )
                 }
             } else {
@@ -260,7 +273,36 @@ fun HomeScreen(
             },
             onConfirmMobileData = { meta, formatId ->
                 viewModel.confirmMobileDataDownload(meta, formatId)
+            },
+            onDownloadSelected = { meta, ids, later ->
+                viewModel.onDownloadSelected(meta, ids, later)
             }
+        )
+    }
+}
+
+@Composable
+private fun NetworkPill(isWifi: Boolean) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(DarkSurface)
+            .border(1.dp, DarkBorder, RoundedCornerShape(20.dp))
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(if (isWifi) AccentSuccess else AccentWarning)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = if (isWifi) "Wi-Fi" else "No Wi-Fi",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = TextPrimary
         )
     }
 }
@@ -290,7 +332,7 @@ private fun LinkInputCard(
         )
         Spacer(modifier = Modifier.height(2.dp))
         Text(
-            text = "Videos, music and files from almost any site.",
+            text = "Videos, music, images and files from almost any site.",
             fontSize = 12.sp,
             color = TextSecondary
         )
@@ -472,7 +514,12 @@ private fun EmptyStateCard(icon: ImageVector, title: String, subtitle: String) {
             Spacer(modifier = Modifier.height(12.dp))
             Text(text = title, color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
             Spacer(modifier = Modifier.height(4.dp))
-            Text(text = subtitle, color = TextSecondary, fontSize = 12.sp)
+            Text(
+                text = subtitle,
+                color = TextSecondary,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
         }
     }
 }
@@ -550,6 +597,7 @@ private fun FailedDownloadCard(
 fun RecentCompletedRow(item: DownloadItem) {
     val context = LocalContext.current
     val sizeBytes = maxOf(item.totalBytes, item.bytesDownloaded)
+    val kind = mediaKindOf(item.formatLabel, item.title)
     val meta = listOf(
         item.site,
         if (sizeBytes > 0L) formatFileSize(sizeBytes) else "",
@@ -565,12 +613,28 @@ fun RecentCompletedRow(item: DownloadItem) {
                 },
             verticalAlignment = Alignment.CenterVertically
         ) {
-            MediaThumbnail(
-                item = item,
+            Box(
                 modifier = Modifier
                     .size(width = 96.dp, height = 60.dp)
                     .clip(RoundedCornerShape(12.dp))
-            )
+            ) {
+                MediaThumbnail(item = item, modifier = Modifier.fillMaxSize())
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(5.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.7f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = kind,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.width(12.dp))
 

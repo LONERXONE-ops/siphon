@@ -19,6 +19,22 @@ fun formatFileSize(bytes: Long): String {
     }
 }
 
+/** VIDEO, AUDIO, IMAGE or FILE, guessed from the format label and the file name. */
+fun mediaKindOf(label: String?, name: String): String {
+    val l = (label ?: "").lowercase()
+    val n = name.lowercase()
+    val imageExts = listOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "avif", "heic")
+    val audioExts = listOf("mp3", "m4a", "aac", "ogg", "opus", "wav", "flac")
+    val videoExts = listOf("mp4", "m4v", "webm", "mkv", "mov", "avi")
+    return when {
+        l.contains("audio") || audioExts.any { l.contains("($it)") || n.endsWith(".$it") } -> "AUDIO"
+        l.contains("image") || imageExts.any { l.contains("($it)") || n.endsWith(".$it") } -> "IMAGE"
+        l.startsWith("file (") || l.startsWith("direct file") ->
+            if (videoExts.any { l.contains("($it)") || n.endsWith(".$it") }) "VIDEO" else "FILE"
+        else -> "VIDEO"
+    }
+}
+
 fun formatTransferSpeed(bytesPerSecond: Long): String {
     return if (bytesPerSecond <= 0L) "" else formatFileSize(bytesPerSecond) + "/s"
 }

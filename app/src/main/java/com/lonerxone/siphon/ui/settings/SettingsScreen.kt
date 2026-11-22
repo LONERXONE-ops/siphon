@@ -58,6 +58,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.documentfile.provider.DocumentFile
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.lonerxone.siphon.ui.components.SiphonCard
@@ -116,12 +117,41 @@ fun SettingsScreen(
     val usingPhoneStorage = savedUri == null || Uri.parse(savedUri).scheme == "siphon"
     val sdMounted = viewModel.isSdCardMounted
 
-    val locationStatus = if (usingPhoneStorage) "Phone storage (Download/SIPHON)" else "Custom folder"
+    // Is the chosen folder really there and writable?
+    val folderDoc = remember(savedUri, sdMounted) {
+        if (savedUri != null && !usingPhoneStorage) {
+            try {
+                DocumentFile.fromTreeUri(context, Uri.parse(savedUri))
+            } catch (e: Exception) {
+                null
+            }
+        } else {
+            null
+        }
+    }
+    val folderReady = remember(folderDoc, sdMounted) {
+        try {
+            folderDoc != null && folderDoc.canWrite()
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    val locationStatus = when {
+        usingPhoneStorage -> "Phone storage (default)"
+        folderReady -> "Folder selected: " + (folderDoc?.name ?: "custom folder")
+        else -> "Folder unavailable, using phone storage"
+    }
+    val locationStatusColor = when {
+        folderReady -> AccentSuccess
+        usingPhoneStorage -> TextSecondary
+        else -> AccentWarning
+    }
     val locationDetail = when {
         usingPhoneStorage && sdMounted -> "Files are saved to Download/SIPHON. An SD card is available if you want to use it."
         usingPhoneStorage -> "Files are saved to Download/SIPHON. No SD card detected."
-        sdMounted -> "Folder: ${Uri.parse(savedUri).lastPathSegment}"
-        else -> "If this folder is on a missing SD card, files are saved to Download/SIPHON instead."
+        folderReady -> "New downloads are saved to this folder."
+        else -> "The chosen folder can't be written to right now, so files go to Download/SIPHON. Choose the folder again if you want to use it."
     }
 
     Box(
@@ -147,11 +177,15 @@ fun SettingsScreen(
                 // ---------------- Save location
                 CollapsibleCard(
                     title = "Save location",
-                    icon = if (usingPhoneStorage) Icons.Default.Folder else Icons.Default.SdCard,
-                    iconTint = TextPrimary,
+                    icon = when {
+                        folderReady -> Icons.Default.CheckCircle
+                        usingPhoneStorage -> Icons.Default.Folder
+                        else -> Icons.Default.SdCard
+                    },
+                    iconTint = locationStatusColor.takeIf { folderReady || !usingPhoneStorage } ?: TextPrimary,
                     initiallyExpanded = true,
                     status = locationStatus,
-                    statusColor = TextSecondary
+                    statusColor = locationStatusColor
                 ) {
                     Text(text = locationDetail, fontSize = 12.sp, color = TextSecondary)
                     Spacer(modifier = Modifier.height(14.dp))

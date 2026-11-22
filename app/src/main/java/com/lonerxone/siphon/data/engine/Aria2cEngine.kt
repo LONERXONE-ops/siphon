@@ -1,6 +1,7 @@
 package com.lonerxone.siphon.data.engine
 
 import android.content.Context
+import android.webkit.MimeTypeMap
 import com.lonerxone.siphon.data.db.entity.EngineType
 import com.lonerxone.siphon.data.engine.model.DownloadProgress
 import com.lonerxone.siphon.data.engine.model.DownloadRequest
@@ -11,12 +12,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import java.io.InputStream
+import java.io.IOException
 import java.net.HttpURLConnection
-import java.util.regex.Pattern
 import java.net.URI
 import java.net.URL
+import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
+import java.util.regex.Pattern
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -29,37 +31,62 @@ class Aria2cEngine @Inject constructor(
 
     private val activeStreams = ConcurrentHashMap<String, Boolean>() // downloadId -> isCancelled/isPaused
 
+    private val defaultUserAgent =
+        "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+
+    private val imageExts = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "avif", "heic", "svg")
+    private val videoExts = setOf("mp4", "m4v", "webm", "mkv", "mov", "avi")
+    private val audioExts = setOf("mp3", "m4a", "aac", "ogg", "opus", "wav", "flac")
+
     override suspend fun fetchMetadata(url: String): Result<MediaMetadata> = withContext(Dispatchers.IO) {
         try {
-            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "HEAD"
-                connectTimeout = 10000
-                readTimeout = 10000
-                setRequestProperty("User-Agent", "Mozilla/5.0 Siphon/2.0")
+            var conn = open(url, "HEAD", 0L)
+            var code = conn.responseCode
+            if (code !in 200..299) {
+                // some servers refuse HEAD requests
+                conn.disconnect()
+                conn = open(url, "GET", 0L)
+                code = conn.responseCode
             }
-            connection.connect()
+            if (code !in 200..299) {
+                conn.disconnect()
+                throw IOException("Server returned HTTP $code")
+            }
 
-            val contentLength = connection.contentLengthLong
-            val contentType = connection.contentType ?: "application/octet-stream"
-            val disposition = connection.getHeaderField("Content-Disposition")
-            var filename = extractFilename(url, disposition)
+            val contentLength = conn.contentLengthLong
+            val contentType = (conn.contentType ?: "").substringBefore(";").trim().lowercase()
+            val disposition = conn.getHeaderField("Content-Disposition")
+            conn.disconnect()
 
-            val ext = filename.substringAfterLast('.', "bin")
-            val domain = extractDomain(url)
+            if (contentType.startsWith("text/html")) {
+                throw IOException("This link is a web page, not a file")
+            }
+
+            val filename = withExtension(baseNameFor(url, disposition), contentType)
+            val ext = filename.substringAfterLast('.', "bin").lowercase()
+            val kind = kindOf(contentType, ext)
+            val label = when (kind) {
+                "IMAGE" -> "Image ($ext)"
+                "VIDEO" -> "Video ($ext)"
+                "AUDIO" -> "Audio ($ext)"
+                else -> "File ($ext)"
+            }
 
             val format = MediaFormat(
                 formatId = "direct",
-                label = "Direct File ($ext)",
+                label = label,
                 ext = ext,
-                fileSizeApprox = contentLength
+                fileSizeApprox = if (contentLength > 0L) contentLength else 0L,
+                isAudioOnly = kind == "AUDIO"
             )
 
             Result.success(
                 MediaMetadata(
                     url = url,
                     title = filename,
+                    thumbnailUrl = if (kind == "IMAGE") url else null,
                     durationSeconds = 0L,
-                    site = domain,
+                    site = extractDomain(url),
                     formats = listOf(format),
                     isDirectFile = true
                 )
@@ -80,101 +107,98 @@ class Aria2cEngine @Inject constructor(
                 request.outputDir.mkdirs()
             }
 
-            val targetFileName = request.customFileName ?: extractFilename(request.url, null)
-            val outputFile = File(request.outputDir, targetFileName)
-            val controlFile = File(request.outputDir, "$targetFileName.aria2")
+            val base = request.customFileName ?: baseNameFor(request.url, null)
+            val part = File(request.outputDir, "$base.part")
+            var startAt = if (part.exists()) part.length() else 0L
 
-            var downloadedBytes = 0L
-            if (outputFile.exists()) {
-                downloadedBytes = outputFile.length()
+            var conn = open(request.url, "GET", startAt)
+            var code = conn.responseCode
+            if (code == 416) {
+                // the partial file is no longer valid, start again
+                conn.disconnect()
+                part.delete()
+                startAt = 0L
+                conn = open(request.url, "GET", 0L)
+                code = conn.responseCode
+            }
+            if (code != 200 && code != 206) {
+                conn.disconnect()
+                throw IllegalStateException("Server returned HTTP $code")
             }
 
-            val connection = (URL(request.url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 15000
-                readTimeout = 30000
-                setRequestProperty("User-Agent", "Mozilla/5.0 Siphon/2.0")
-                if (downloadedBytes > 0) {
-                    // Resume range request
-                    setRequestProperty("Range", "bytes=$downloadedBytes-")
-                }
-            }
-            connection.connect()
+            val resumed = code == 206 && startAt > 0L
+            if (!resumed) startAt = 0L
 
-            val responseCode = connection.responseCode
-            val isResumed = responseCode == HttpURLConnection.HTTP_PARTIAL
-            if (responseCode != HttpURLConnection.HTTP_OK && responseCode != HttpURLConnection.HTTP_PARTIAL) {
-                throw IllegalStateException("Server returned HTTP $responseCode")
-            }
+            val contentType = (conn.contentType ?: "").substringBefore(";").trim().lowercase()
+            val disposition = conn.getHeaderField("Content-Disposition")
+            val remaining = conn.contentLengthLong
+            val total = if (remaining > 0L) remaining + startAt else 0L
 
-            val totalBytes = if (isResumed) {
-                downloadedBytes + connection.contentLengthLong
-            } else {
-                downloadedBytes = 0L
-                connection.contentLengthLong
-            }
-
-            // Write control file to mark partial download
-            if (!controlFile.exists()) {
-                controlFile.writeText("siphon_aria2_control:${request.url}")
-            }
-
-            val inputStream: InputStream = connection.inputStream
-            val outputStream = if (isResumed && downloadedBytes > 0) {
-                FileOutputStream(outputFile, true) // append mode for resume
-            } else {
-                FileOutputStream(outputFile, false)
-            }
-
-            val buffer = ByteArray(64 * 1024)
-            var bytesRead: Int
+            var done = startAt
             var lastUpdate = System.currentTimeMillis()
-            var lastBytes = downloadedBytes
+            var lastBytes = done
 
-            outputStream.use { out ->
-                inputStream.use { inp ->
-                    while (inp.read(buffer).also { bytesRead = it } != -1) {
-                        if (activeStreams[request.id] == true) {
-                            // Paused / Cancelled
-                            out.flush()
-                            return@withContext Result.failure(Exception("Download paused by user"))
-                        }
+            try {
+                conn.inputStream.use { input ->
+                    FileOutputStream(part, resumed).use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            if (activeStreams[request.id] == true) {
+                                output.flush()
+                                return@withContext Result.failure(Exception("Download paused by user"))
+                            }
+                            val read = input.read(buffer)
+                            if (read == -1) break
+                            output.write(buffer, 0, read)
+                            done += read
 
-                        out.write(buffer, 0, bytesRead)
-                        downloadedBytes += bytesRead
-
-                        val now = System.currentTimeMillis()
-                        if (now - lastUpdate >= 500) {
-                            val timeDelta = (now - lastUpdate) / 1000.0
-                            val bytesDelta = downloadedBytes - lastBytes
-                            val speed = if (timeDelta > 0) (bytesDelta / timeDelta).toLong() else 0L
-                            val remainingBytes = if (totalBytes > downloadedBytes) totalBytes - downloadedBytes else 0L
-                            val eta = if (speed > 0) remainingBytes / speed else 0L
-                            val percent = if (totalBytes > 0) (downloadedBytes * 100f / totalBytes) else 0f
-
-                            onProgress(
-                                DownloadProgress(
-                                    progressPercent = percent,
-                                    bytesDownloaded = downloadedBytes,
-                                    totalBytes = totalBytes,
-                                    speedBps = speed,
-                                    etaSeconds = eta
+                            val now = System.currentTimeMillis()
+                            if (now - lastUpdate >= 500) {
+                                val seconds = (now - lastUpdate) / 1000.0
+                                val speed = if (seconds > 0) ((done - lastBytes) / seconds).toLong() else 0L
+                                val left = if (total > done) total - done else 0L
+                                val eta = if (speed > 0) left / speed else 0L
+                                val percent = if (total > 0) done * 100f / total else 0f
+                                onProgress(
+                                    DownloadProgress(
+                                        progressPercent = percent,
+                                        bytesDownloaded = done,
+                                        totalBytes = total,
+                                        speedBps = speed,
+                                        etaSeconds = eta
+                                    )
                                 )
-                            )
-
-                            lastUpdate = now
-                            lastBytes = downloadedBytes
+                                lastUpdate = now
+                                lastBytes = done
+                            }
                         }
+                        output.flush()
                     }
-                    out.flush()
                 }
+            } finally {
+                conn.disconnect()
             }
 
-            // Remove aria2 control file after successful download
-            if (controlFile.exists()) {
-                controlFile.delete()
+            if (total > 0L && done < total) {
+                throw IOException("Connection closed early")
             }
 
-            Result.success(outputFile)
+            val finalName = withExtension(baseNameFor(request.url, disposition, request.customFileName), contentType)
+            val finalFile = File(request.outputDir, finalName)
+            if (finalFile.exists()) finalFile.delete()
+            if (!part.renameTo(finalFile)) throw IOException("Could not finish the file")
+
+            onProgress(
+                DownloadProgress(
+                    progressPercent = 100f,
+                    bytesDownloaded = done,
+                    totalBytes = done,
+                    speedBps = 0L,
+                    etaSeconds = 0L
+                )
+            )
+
+            Result.success(finalFile)
         } catch (e: Exception) {
             Result.failure(e)
         } finally {
@@ -197,19 +221,97 @@ class Aria2cEngine @Inject constructor(
         return true
     }
 
-    private fun extractFilename(url: String, contentDisposition: String?): String {
-        if (!contentDisposition.isNullOrBlank()) {
-            val pattern = Pattern.compile("filename=\"?([^\";]+)\"?")
-            val matcher = pattern.matcher(contentDisposition)
-            if (matcher.find()) {
-                val match = matcher.group(1)
-                if (!match.isNullOrBlank()) return match
+    // ---------------------------------------------------------------- helpers
+
+    private fun applyHeaders(conn: HttpURLConnection, url: String) {
+        conn.setRequestProperty("User-Agent", defaultUserAgent)
+        conn.setRequestProperty("Accept", "*/*")
+        conn.setRequestProperty("Accept-Encoding", "identity")
+        RequestHeaderRegistry.get(url)?.forEach { (name, value) ->
+            if (value.isNotBlank() &&
+                !name.equals("Accept-Encoding", ignoreCase = true) &&
+                !name.equals("Range", ignoreCase = true)
+            ) {
+                conn.setRequestProperty(name, value)
             }
         }
-        val uri = URI(url)
-        val path = uri.path
-        val lastSegment = path.substringAfterLast('/', "")
-        return if (lastSegment.isNotBlank()) lastSegment else "download.bin"
+    }
+
+    private fun open(url: String, method: String, rangeStart: Long): HttpURLConnection {
+        var current = url
+        repeat(6) {
+            val conn = (URL(current).openConnection() as HttpURLConnection).apply {
+                requestMethod = method
+                connectTimeout = 15000
+                readTimeout = 30000
+                instanceFollowRedirects = false
+            }
+            applyHeaders(conn, url)
+            if (rangeStart > 0L) conn.setRequestProperty("Range", "bytes=$rangeStart-")
+
+            val code = conn.responseCode
+            if (code in 300..399) {
+                val location = conn.getHeaderField("Location")
+                conn.disconnect()
+                if (location.isNullOrBlank()) throw IOException("Redirect without a location")
+                current = URL(URL(current), location).toString()
+            } else {
+                return conn
+            }
+        }
+        throw IOException("Too many redirects")
+    }
+
+    private fun sanitize(name: String): String {
+        return name.replace(Regex("""[\\/:*?"<>|\n\r]"""), "_").trim().take(120)
+    }
+
+    private fun baseNameFor(url: String, contentDisposition: String?, custom: String? = null): String {
+        if (!custom.isNullOrBlank()) return custom
+        if (!contentDisposition.isNullOrBlank()) {
+            val matcher = Pattern.compile("filename\\*?=(?:UTF-8'')?\"?([^\";]+)\"?", Pattern.CASE_INSENSITIVE)
+                .matcher(contentDisposition)
+            if (matcher.find()) {
+                val match = matcher.group(1)
+                if (!match.isNullOrBlank()) {
+                    val decoded = try {
+                        URLDecoder.decode(match, "UTF-8")
+                    } catch (e: Exception) {
+                        match
+                    }
+                    return sanitize(decoded)
+                }
+            }
+        }
+        val path = try {
+            URI(url).path ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+        val last = path.substringAfterLast('/', "")
+        val decoded = try {
+            URLDecoder.decode(last, "UTF-8")
+        } catch (e: Exception) {
+            last
+        }
+        return if (decoded.isNotBlank()) sanitize(decoded) else "download"
+    }
+
+    private fun withExtension(name: String, contentType: String): String {
+        val currentExt = name.substringAfterLast('.', "")
+        val looksLikeExt = currentExt.length in 2..5 && currentExt.all { it.isLetterOrDigit() }
+        if (looksLikeExt) return name
+        val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(contentType)
+        return if (!ext.isNullOrBlank()) "$name.$ext" else if (name.contains('.')) name else "$name.bin"
+    }
+
+    private fun kindOf(contentType: String, ext: String): String {
+        return when {
+            contentType.startsWith("image/") || ext in imageExts -> "IMAGE"
+            contentType.startsWith("video/") || ext in videoExts -> "VIDEO"
+            contentType.startsWith("audio/") || ext in audioExts -> "AUDIO"
+            else -> "FILE"
+        }
     }
 
     private fun extractDomain(url: String): String {

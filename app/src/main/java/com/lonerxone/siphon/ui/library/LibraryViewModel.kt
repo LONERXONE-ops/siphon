@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lonerxone.siphon.data.db.entity.DownloadItem
 import com.lonerxone.siphon.data.repository.DownloadRepository
+import com.lonerxone.siphon.ui.components.mediaKindOf
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -17,6 +18,7 @@ enum class LibraryFilter {
     ALL,
     VIDEO,
     AUDIO,
+    IMAGES,
     FILES
 }
 
@@ -52,17 +54,19 @@ class LibraryViewModel @Inject constructor(
                 else item.title.contains(query, ignoreCase = true) || item.site.contains(query, ignoreCase = true)
             }
             .filter { item ->
+                val kind = mediaKindOf(item.formatLabel, item.title)
                 when (filter) {
                     LibraryFilter.ALL -> true
-                    LibraryFilter.VIDEO -> item.formatLabel?.contains("audio", ignoreCase = true) == false
-                    LibraryFilter.AUDIO -> item.formatLabel?.contains("audio", ignoreCase = true) == true
-                    LibraryFilter.FILES -> item.engine.name == "ARIA2C"
+                    LibraryFilter.VIDEO -> kind == "VIDEO"
+                    LibraryFilter.AUDIO -> kind == "AUDIO"
+                    LibraryFilter.IMAGES -> kind == "IMAGE"
+                    LibraryFilter.FILES -> kind == "FILE"
                 }
             }
             .sortedWith { a, b ->
                 when (sort) {
                     LibrarySort.DATE_DESC -> (b.completedAt ?: 0L).compareTo(a.completedAt ?: 0L)
-                    LibrarySort.SIZE_DESC -> b.bytesDownloaded.compareTo(a.bytesDownloaded)
+                    LibrarySort.SIZE_DESC -> maxOf(b.totalBytes, b.bytesDownloaded).compareTo(maxOf(a.totalBytes, a.bytesDownloaded))
                     LibrarySort.NAME_ASC -> a.title.compareTo(b.title, ignoreCase = true)
                 }
             }
@@ -80,9 +84,10 @@ class LibraryViewModel @Inject constructor(
         _selectedSort.value = sort
     }
 
-    fun deleteItem(id: String) {
+    /** [deleteFile] true also removes the real file (gallery, phone storage or SD card). */
+    fun deleteItem(id: String, deleteFile: Boolean = true) {
         viewModelScope.launch {
-            repository.deleteDownload(id, deleteFile = true)
+            repository.deleteDownload(id, deleteFile = deleteFile)
         }
     }
 }

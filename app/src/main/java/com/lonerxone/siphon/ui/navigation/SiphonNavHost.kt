@@ -23,6 +23,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.lonerxone.siphon.ui.browser.BrowserScreen
 import com.lonerxone.siphon.ui.home.HomeScreen
 import com.lonerxone.siphon.ui.library.LibraryScreen
 import com.lonerxone.siphon.ui.settings.SettingsScreen
@@ -42,6 +43,7 @@ fun SiphonNavHost(sharedUrl: String? = null) {
     val screens = listOf(
         Screen.Home,
         Screen.Waitlist,
+        Screen.Browser,
         Screen.Library,
         Screen.Settings
     )
@@ -102,6 +104,9 @@ fun SiphonNavHost(sharedUrl: String? = null) {
             }
             composable(Screen.Waitlist.route) {
                 WaitlistScreen()
+            }
+            composable(Screen.Browser.route) {
+                BrowserScreen()
             }
             composable(Screen.Library.route) {
                 LibraryScreen()

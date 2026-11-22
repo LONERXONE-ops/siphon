@@ -6,30 +6,44 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,8 +59,10 @@ import com.lonerxone.siphon.ui.components.MediaThumbnail
 import com.lonerxone.siphon.ui.components.SiphonCard
 import com.lonerxone.siphon.ui.components.describeSaveLocation
 import com.lonerxone.siphon.ui.components.formatFileSize
+import com.lonerxone.siphon.ui.components.mediaKindOf
 import com.lonerxone.siphon.ui.components.openMedia
 import com.lonerxone.siphon.ui.components.shareMedia
+import com.lonerxone.siphon.ui.theme.AccentError
 import com.lonerxone.siphon.ui.theme.DarkBackground
 import com.lonerxone.siphon.ui.theme.DarkBorder
 import com.lonerxone.siphon.ui.theme.DarkElevated
@@ -66,91 +82,83 @@ fun LibraryScreen(
     val selectedFilter by viewModel.selectedFilter.collectAsState()
     val context = LocalContext.current
 
+    var pendingDelete by remember { mutableStateOf<DownloadItem?>(null) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(DarkBackground)
     ) {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp)
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 90.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item {
-                Spacer(modifier = Modifier.height(24.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.Bottom
-                ) {
-                    Text(
-                        text = "Library",
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = TextPrimary
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column {
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        Text(
+                            text = "Library",
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "${items.size} files",
+                            fontSize = 12.sp,
+                            color = TextSecondary
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { viewModel.onSearchQueryChanged(it) },
+                        placeholder = { Text("Search your downloads", color = TextMuted) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        leadingIcon = {
+                            Icon(Icons.Default.Search, contentDescription = null, tint = TextSecondary)
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = DarkSurface,
+                            unfocusedContainerColor = DarkSurface,
+                            focusedBorderColor = TextSecondary,
+                            unfocusedBorderColor = DarkBorder,
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary,
+                            cursorColor = TextPrimary
+                        ),
+                        singleLine = true
                     )
-                    Text(
-                        text = "${items.size} files",
-                        fontSize = 12.sp,
-                        color = TextSecondary
-                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterPill("All", selectedFilter == LibraryFilter.ALL) { viewModel.setFilter(LibraryFilter.ALL) }
+                        FilterPill("Videos", selectedFilter == LibraryFilter.VIDEO) { viewModel.setFilter(LibraryFilter.VIDEO) }
+                        FilterPill("Audio", selectedFilter == LibraryFilter.AUDIO) { viewModel.setFilter(LibraryFilter.AUDIO) }
+                        FilterPill("Images", selectedFilter == LibraryFilter.IMAGES) { viewModel.setFilter(LibraryFilter.IMAGES) }
+                        FilterPill("Files", selectedFilter == LibraryFilter.FILES) { viewModel.setFilter(LibraryFilter.FILES) }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
                 }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { viewModel.onSearchQueryChanged(it) },
-                    placeholder = { Text("Search your downloads", color = TextMuted) },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    leadingIcon = {
-                        Icon(Icons.Default.Search, contentDescription = null, tint = TextSecondary)
-                    },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = DarkSurface,
-                        unfocusedContainerColor = DarkSurface,
-                        focusedBorderColor = PrimaryGradientStart,
-                        unfocusedBorderColor = DarkBorder,
-                        focusedTextColor = TextPrimary,
-                        unfocusedTextColor = TextPrimary
-                    ),
-                    singleLine = true
-                )
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterPill(
-                        label = "All",
-                        isSelected = selectedFilter == LibraryFilter.ALL,
-                        onClick = { viewModel.setFilter(LibraryFilter.ALL) }
-                    )
-                    FilterPill(
-                        label = "Videos",
-                        isSelected = selectedFilter == LibraryFilter.VIDEO,
-                        onClick = { viewModel.setFilter(LibraryFilter.VIDEO) }
-                    )
-                    FilterPill(
-                        label = "Audio",
-                        isSelected = selectedFilter == LibraryFilter.AUDIO,
-                        onClick = { viewModel.setFilter(LibraryFilter.AUDIO) }
-                    )
-                    FilterPill(
-                        label = "Files",
-                        isSelected = selectedFilter == LibraryFilter.FILES,
-                        onClick = { viewModel.setFilter(LibraryFilter.FILES) }
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
             }
 
             if (items.isEmpty()) {
-                item {
+                item(span = { GridItemSpan(maxLineSpan) }) {
                     SiphonCard(modifier = Modifier.fillMaxWidth()) {
                         Column(
                             modifier = Modifier
@@ -181,24 +189,54 @@ fun LibraryScreen(
                 }
             } else {
                 items(items, key = { it.id }) { item ->
-                    LibraryItemCard(
+                    LibraryTile(
                         item = item,
-                        onOpen = {
-                            item.finalUri?.let { openMedia(context, it, item.title) }
-                        },
-                        onShare = {
-                            item.finalUri?.let { shareMedia(context, it, item.title) }
-                        },
-                        onDelete = { viewModel.deleteItem(item.id) }
+                        onOpen = { item.finalUri?.let { openMedia(context, it, item.title) } },
+                        onShare = { item.finalUri?.let { shareMedia(context, it, item.title) } },
+                        onDelete = { pendingDelete = item }
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
                 }
             }
-
-            item {
-                Spacer(modifier = Modifier.height(80.dp))
-            }
         }
+    }
+
+    val target = pendingDelete
+    if (target != null) {
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = {
+                Text("Delete this download?", fontWeight = FontWeight.Bold, color = TextPrimary)
+            },
+            text = {
+                Text(
+                    text = "\"${target.title}\" will be removed from SIPHON. Delete the file too, and it also disappears from your gallery and storage.",
+                    color = TextSecondary,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteItem(target.id, deleteFile = true)
+                    pendingDelete = null
+                }) {
+                    Text("Delete file", color = AccentError, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        viewModel.deleteItem(target.id, deleteFile = false)
+                        pendingDelete = null
+                    }) {
+                        Text("Remove from list only", color = TextSecondary)
+                    }
+                    TextButton(onClick = { pendingDelete = null }) {
+                        Text("Cancel", color = TextPrimary)
+                    }
+                }
+            },
+            containerColor = DarkElevated
+        )
     }
 }
 
@@ -226,75 +264,108 @@ fun FilterPill(
 }
 
 @Composable
-fun LibraryItemCard(
+private fun LibraryTile(
     item: DownloadItem,
     onOpen: () -> Unit,
     onShare: () -> Unit,
     onDelete: () -> Unit
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     val sizeBytes = maxOf(item.totalBytes, item.bytesDownloaded)
+    val kind = mediaKindOf(item.formatLabel, item.title)
     val meta = listOf(
-        item.site,
         if (sizeBytes > 0L) formatFileSize(sizeBytes) else "",
         describeSaveLocation(item.finalUri)
     ).filter { it.isNotBlank() }.joinToString("  •  ")
 
-    SiphonCard(modifier = Modifier.fillMaxWidth()) {
-        Row(
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(DarkSurface)
+            .border(1.dp, DarkBorder, RoundedCornerShape(18.dp))
+            .clickable(onClick = onOpen)
+    ) {
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onOpen),
-            verticalAlignment = Alignment.CenterVertically
+                .aspectRatio(16f / 10f)
         ) {
-            MediaThumbnail(
-                item = item,
+            MediaThumbnail(item = item, modifier = Modifier.fillMaxSize())
+
+            Box(
                 modifier = Modifier
-                    .size(width = 96.dp, height = 60.dp)
-                    .clip(RoundedCornerShape(12.dp))
-            )
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = item.title,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp,
-                    color = TextPrimary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = meta,
-                    fontSize = 12.sp,
-                    color = TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                    .align(Alignment.BottomStart)
+                    .padding(8.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.Black.copy(alpha = 0.7f))
+                    .padding(horizontal = 7.dp, vertical = 3.dp)
+            ) {
+                Text(text = kind, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
             }
 
-            Spacer(modifier = Modifier.width(6.dp))
-
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                SmallAction(icon = { Icon(Icons.Default.Share, contentDescription = "Share", tint = TextSecondary, modifier = Modifier.size(18.dp)) }, onClick = onShare)
-                Spacer(modifier = Modifier.height(6.dp))
-                SmallAction(icon = { Icon(Icons.Default.Delete, contentDescription = "Delete", tint = TextMuted, modifier = Modifier.size(18.dp)) }, onClick = onDelete)
+            Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                Box(
+                    modifier = Modifier
+                        .padding(6.dp)
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .clickable { menuOpen = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = "More",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Open") },
+                        leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
+                        onClick = {
+                            menuOpen = false
+                            onOpen()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Share") },
+                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                        onClick = {
+                            menuOpen = false
+                            onShare()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete", color = AccentError) },
+                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = AccentError) },
+                        onClick = {
+                            menuOpen = false
+                            onDelete()
+                        }
+                    )
+                }
             }
         }
-    }
-}
 
-@Composable
-private fun SmallAction(icon: @Composable () -> Unit, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .size(34.dp)
-            .clip(CircleShape)
-            .background(DarkElevated)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        icon()
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Text(
+                text = item.title,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+                color = TextPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(3.dp))
+            Text(
+                text = meta,
+                fontSize = 11.sp,
+                color = TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
