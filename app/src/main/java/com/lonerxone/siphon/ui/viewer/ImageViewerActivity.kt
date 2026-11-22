@@ -176,6 +176,7 @@ private fun ImageViewerScreen(
 }
 
 @Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 private fun ZoomableImage(
     model: String,
     onZoomChanged: (Boolean) -> Unit,
