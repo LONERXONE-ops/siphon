@@ -2,6 +2,7 @@ package com.lonerxone.siphon.ui.components
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.LruCache
@@ -36,14 +37,23 @@ import com.lonerxone.siphon.ui.theme.DarkElevated
 import com.lonerxone.siphon.ui.theme.DarkSurface
 import com.lonerxone.siphon.ui.theme.TextMuted
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import java.security.MessageDigest
 
 private val frameCache = LruCache<String, ImageBitmap>(48)
 private val ThumbBrush = Brush.verticalGradient(listOf(DarkElevated, DarkSurface))
 
+// only two thumbnails are prepared at a time, so a long list never overloads the phone
+private val thumbnailPermits = Semaphore(2)
+
 /**
- * Shows a real frame from the downloaded video when the file exists,
+ * Shows a preview of the downloaded file (a video frame or the image itself),
  * otherwise the site's preview image, otherwise a clean placeholder.
+ * Previews are saved on the phone, so they appear instantly the next time.
  */
 @Composable
 fun MediaThumbnail(item: DownloadItem, modifier: Modifier = Modifier) {
@@ -55,7 +65,9 @@ fun MediaThumbnail(item: DownloadItem, modifier: Modifier = Modifier) {
 
     LaunchedEffect(key) {
         if (key != null && frame == null) {
-            val loaded = withContext(Dispatchers.IO) { extractFrame(context, key) }
+            val loaded = thumbnailPermits.withPermit {
+                withContext(Dispatchers.IO) { loadThumbnail(context, key) }
+            }
             if (loaded != null) {
                 frameCache.put(key, loaded)
                 frame = loaded
@@ -102,7 +114,30 @@ private fun placeholderIcon(item: DownloadItem): ImageVector {
     }
 }
 
-private fun extractFrame(context: Context, uriString: String): ImageBitmap? {
+private fun sha1(text: String): String {
+    val digest = MessageDigest.getInstance("SHA-1").digest(text.toByteArray())
+    return digest.joinToString("") { "%02x".format(it) }
+}
+
+private fun loadThumbnail(context: Context, uriString: String): ImageBitmap? {
+    val dir = File(context.cacheDir, "thumbs")
+    if (!dir.exists()) dir.mkdirs()
+    val file = File(dir, sha1(uriString) + ".jpg")
+
+    if (file.exists()) {
+        val cached = BitmapFactory.decodeFile(file.absolutePath)
+        if (cached != null) return cached.asImageBitmap()
+    }
+
+    val bitmap = extractFrame(context, uriString) ?: decodeImage(context, uriString) ?: return null
+    try {
+        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 82, it) }
+    } catch (e: Exception) {
+    }
+    return bitmap.asImageBitmap()
+}
+
+private fun extractFrame(context: Context, uriString: String): Bitmap? {
     val retriever = MediaMetadataRetriever()
     return try {
         retriever.setDataSource(context, Uri.parse(uriString))
@@ -110,12 +145,11 @@ private fun extractFrame(context: Context, uriString: String): ImageBitmap? {
             ?: return null
         val maxSide = 480
         val scale = maxSide.toFloat() / maxOf(raw.width, raw.height)
-        val bmp = if (scale < 1f) {
+        if (scale < 1f) {
             Bitmap.createScaledBitmap(raw, (raw.width * scale).toInt(), (raw.height * scale).toInt(), true)
         } else {
             raw
         }
-        bmp.asImageBitmap()
     } catch (e: Exception) {
         null
     } finally {
@@ -123,5 +157,24 @@ private fun extractFrame(context: Context, uriString: String): ImageBitmap? {
             retriever.release()
         } catch (e: Exception) {
         }
+    }
+}
+
+private fun decodeImage(context: Context, uriString: String): Bitmap? {
+    return try {
+        val resolver = context.contentResolver
+        val uri = Uri.parse(uriString)
+
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        var sample = 1
+        while (bounds.outWidth / sample > 640 || bounds.outHeight / sample > 640) sample *= 2
+
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+    } catch (e: Exception) {
+        null
     }
 }

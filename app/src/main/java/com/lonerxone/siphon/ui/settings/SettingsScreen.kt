@@ -7,14 +7,10 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,13 +20,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryAlert
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SdCard
 import androidx.compose.material.icons.filled.Wifi
@@ -42,18 +37,14 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -61,12 +52,14 @@ import androidx.compose.ui.unit.sp
 import androidx.documentfile.provider.DocumentFile
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
-import com.lonerxone.siphon.ui.components.SiphonCard
+import com.lonerxone.siphon.ui.components.BrandMark
+import com.lonerxone.siphon.ui.components.ExpandableCard
 import com.lonerxone.siphon.ui.components.SiphonSecondaryButton
 import com.lonerxone.siphon.ui.theme.AccentError
 import com.lonerxone.siphon.ui.theme.AccentSuccess
 import com.lonerxone.siphon.ui.theme.AccentWarning
 import com.lonerxone.siphon.ui.theme.DarkBackground
+import com.lonerxone.siphon.ui.theme.DarkBorder
 import com.lonerxone.siphon.ui.theme.DarkElevated
 import com.lonerxone.siphon.ui.theme.PrimaryGradientEnd
 import com.lonerxone.siphon.ui.theme.PrimaryGradientStart
@@ -74,6 +67,8 @@ import com.lonerxone.siphon.ui.theme.TextMuted
 import com.lonerxone.siphon.ui.theme.TextPrimary
 import com.lonerxone.siphon.ui.theme.TextSecondary
 import com.yausername.youtubedl_android.YoutubeDL
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SettingsScreen(
@@ -105,41 +100,44 @@ fun SettingsScreen(
         onPauseOrDispose { }
     }
 
-    val engineVersion = remember(engineState) {
-        try {
-            YoutubeDL.getInstance().versionName(context)
-        } catch (e: Exception) {
-            null
-        }
-    }
-
     val savedUri = prefs.sdFolderUri
     val usingPhoneStorage = savedUri == null || Uri.parse(savedUri).scheme == "siphon"
-    val sdMounted = viewModel.isSdCardMounted
+    val sdMounted = remember(savedUri) { viewModel.isSdCardMounted }
 
-    // Is the chosen folder really there and writable?
-    val folderDoc = remember(savedUri, sdMounted) {
-        if (savedUri != null && !usingPhoneStorage) {
+    // File checks run in the background so the screen opens instantly
+    var folderReady by remember { mutableStateOf(false) }
+    var folderName by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(savedUri, sdMounted) {
+        val result = withContext(Dispatchers.IO) {
+            if (savedUri != null && !usingPhoneStorage) {
+                try {
+                    val doc = DocumentFile.fromTreeUri(context, Uri.parse(savedUri))
+                    Pair(doc != null && doc.canWrite(), doc?.name)
+                } catch (e: Exception) {
+                    Pair(false, null)
+                }
+            } else {
+                Pair(false, null)
+            }
+        }
+        folderReady = result.first
+        folderName = result.second
+    }
+
+    var engineVersion by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(engineState) {
+        engineVersion = withContext(Dispatchers.IO) {
             try {
-                DocumentFile.fromTreeUri(context, Uri.parse(savedUri))
+                YoutubeDL.getInstance().versionName(context)
             } catch (e: Exception) {
                 null
             }
-        } else {
-            null
-        }
-    }
-    val folderReady = remember(folderDoc, sdMounted) {
-        try {
-            folderDoc != null && folderDoc.canWrite()
-        } catch (e: Exception) {
-            false
         }
     }
 
     val locationStatus = when {
         usingPhoneStorage -> "Phone storage (default)"
-        folderReady -> "Folder selected: " + (folderDoc?.name ?: "custom folder")
+        folderReady -> "Folder selected: " + (folderName ?: "custom folder")
         else -> "Folder unavailable, using phone storage"
     }
     val locationStatusColor = when {
@@ -175,14 +173,14 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(22.dp))
 
                 // ---------------- Save location
-                CollapsibleCard(
+                ExpandableCard(
                     title = "Save location",
                     icon = when {
                         folderReady -> Icons.Default.CheckCircle
                         usingPhoneStorage -> Icons.Default.Folder
                         else -> Icons.Default.SdCard
                     },
-                    iconTint = locationStatusColor.takeIf { folderReady || !usingPhoneStorage } ?: TextPrimary,
+                    iconTint = if (folderReady) AccentSuccess else if (usingPhoneStorage) TextPrimary else AccentWarning,
                     initiallyExpanded = true,
                     status = locationStatus,
                     statusColor = locationStatusColor
@@ -210,7 +208,7 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // ---------------- Background downloads
-                CollapsibleCard(
+                ExpandableCard(
                     title = "Background downloads",
                     icon = if (batteryUnrestricted) Icons.Default.CheckCircle else Icons.Default.BatteryAlert,
                     iconTint = if (batteryUnrestricted) AccentSuccess else AccentWarning,
@@ -249,7 +247,7 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // ---------------- Network and waitlist
-                CollapsibleCard(
+                ExpandableCard(
                     title = "Network and waitlist",
                     icon = Icons.Default.Wifi,
                     iconTint = TextPrimary,
@@ -303,7 +301,7 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // ---------------- Download engine
-                CollapsibleCard(
+                ExpandableCard(
                     title = "Download engine",
                     icon = Icons.Default.Refresh,
                     iconTint = TextPrimary,
@@ -351,15 +349,15 @@ fun SettingsScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 // ---------------- App updates
                 UpdateSection()
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 // ---------------- About
-                CollapsibleCard(
+                ExpandableCard(
                     title = "About",
                     icon = Icons.Default.Info,
                     iconTint = TextPrimary,
@@ -367,30 +365,81 @@ fun SettingsScreen(
                     status = "SIPHON v${com.lonerxone.siphon.BuildConfig.VERSION_NAME}",
                     statusColor = TextSecondary
                 ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        BrandMark(boxSize = 52.dp)
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column {
+                            Text(
+                                text = "SIPHON",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 3.sp,
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = "Download anything. Keep it private.",
+                                fontSize = 12.sp,
+                                color = TextSecondary
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text("Version", fontSize = 11.sp, color = TextMuted)
+                            Text(
+                                text = com.lonerxone.siphon.BuildConfig.VERSION_NAME,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextPrimary
+                            )
+                        }
+                        Column {
+                            Text("Build", fontSize = 11.sp, color = TextMuted)
+                            Text(
+                                text = "${com.lonerxone.siphon.BuildConfig.VERSION_CODE}",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextPrimary
+                            )
+                        }
+                        Column {
+                            Text("Made by", fontSize = 11.sp, color = TextMuted)
+                            Text(
+                                text = "LONERXONE",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextPrimary
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(DarkBorder)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+
                     Text(
-                        text = "Credit: LONERXONE",
-                        fontWeight = FontWeight.SemiBold,
+                        text = "What it does",
                         fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = TextPrimary
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Build ${com.lonerxone.siphon.BuildConfig.VERSION_CODE}",
-                        fontSize = 12.sp,
-                        color = TextSecondary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "github.com/LONERXONE-ops/siphon",
-                        fontSize = 12.sp,
-                        color = TextSecondary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "A personal downloader. No accounts, no ads, no tracking.",
-                        fontSize = 12.sp,
-                        color = TextMuted
-                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    AboutPoint("Video, music, images and files from almost any site")
+                    AboutPoint("A browser that finds media hidden inside pages")
+                    AboutPoint("A waitlist that downloads by itself when you are on Wi-Fi")
+                    AboutPoint("Saves to your phone or your SD card")
+                    AboutPoint("No accounts, no ads, no tracking")
                 }
 
                 Spacer(modifier = Modifier.height(80.dp))
@@ -400,63 +449,20 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun CollapsibleCard(
-    title: String,
-    icon: ImageVector,
-    iconTint: Color,
-    initiallyExpanded: Boolean,
-    status: String?,
-    statusColor: Color,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    var expanded by rememberSaveable(title) { mutableStateOf(initiallyExpanded) }
-    val rotation by animateFloatAsState(
-        targetValue = if (expanded) 180f else 0f,
-        label = "chevron"
-    )
-
-    SiphonCard(modifier = Modifier.fillMaxWidth()) {
-        Row(
+private fun AboutPoint(text: String) {
+    Row(
+        modifier = Modifier.padding(bottom = 8.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Icon(
+            imageVector = Icons.Default.Check,
+            contentDescription = null,
+            tint = AccentSuccess,
             modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .clickable { expanded = !expanded }
-                .padding(vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = iconTint,
-                modifier = Modifier.size(22.dp)
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = TextPrimary
-                )
-                if (status != null) {
-                    Text(text = status, fontSize = 12.sp, color = statusColor)
-                }
-            }
-            Icon(
-                imageVector = Icons.Default.KeyboardArrowDown,
-                contentDescription = if (expanded) "Collapse" else "Expand",
-                tint = TextSecondary,
-                modifier = Modifier.rotate(rotation)
-            )
-        }
-
-        AnimatedVisibility(visible = expanded) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 14.dp),
-                content = content
-            )
-        }
+                .padding(top = 2.dp)
+                .size(14.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(text = text, fontSize = 12.sp, color = TextSecondary)
     }
 }

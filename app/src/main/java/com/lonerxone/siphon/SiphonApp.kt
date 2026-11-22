@@ -90,6 +90,12 @@ class SiphonApp : Application(), ImageLoaderFactory {
      * (at most every 6 hours, and never on mobile data).
      */
     private fun warmUpEngine() {
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            try {
+                com.lonerxone.siphon.ui.browser.BrowserHolder.warmUp(applicationContext)
+            } catch (e: Exception) {
+            }
+        }, 3000)
         // loads Python and yt-dlp into memory once, so the first real link opens faster
         try {
             val request = YoutubeDLRequest(emptyList())

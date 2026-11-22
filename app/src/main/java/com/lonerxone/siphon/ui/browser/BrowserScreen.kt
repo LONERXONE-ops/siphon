@@ -1,14 +1,9 @@
 package com.lonerxone.siphon.ui.browser
 
-import android.graphics.Bitmap
 import android.net.Uri
+import android.view.ViewGroup
 import android.webkit.CookieManager
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,8 +24,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -44,24 +37,19 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -75,6 +63,7 @@ import com.lonerxone.siphon.data.engine.RequestHeaderRegistry
 import com.lonerxone.siphon.data.engine.model.MediaFormat
 import com.lonerxone.siphon.data.engine.model.MediaMetadata
 import com.lonerxone.siphon.ui.components.CircleActionButton
+import com.lonerxone.siphon.ui.components.PillTextField
 import com.lonerxone.siphon.ui.components.SiphonCard
 import com.lonerxone.siphon.ui.components.SiphonSecondaryButton
 import com.lonerxone.siphon.ui.home.HomeViewModel
@@ -89,27 +78,6 @@ import com.lonerxone.siphon.ui.theme.TextMuted
 import com.lonerxone.siphon.ui.theme.TextPrimary
 import com.lonerxone.siphon.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
-import org.json.JSONTokener
-
-private data class SniffedMedia(val url: String, val kind: String, val referer: String)
-
-private val SCAN_JS = """
-(function() {
-  var out = [];
-  function add(kind, u) { if (u && u.indexOf('http') === 0) out.push(kind + '|' + u); }
-  document.querySelectorAll('video').forEach(function(v) {
-    add('VIDEO', v.currentSrc || v.src);
-    v.querySelectorAll('source').forEach(function(s) { add('VIDEO', s.src); });
-  });
-  document.querySelectorAll('audio').forEach(function(a) { add('AUDIO', a.currentSrc || a.src); });
-  document.querySelectorAll('img').forEach(function(i) {
-    if ((i.naturalWidth || 0) >= 200 && (i.naturalHeight || 0) >= 200) { add('IMAGE', i.currentSrc || i.src); }
-  });
-  var og = document.querySelector('meta[property="og:image"]');
-  if (og) { add('IMAGE', og.content); }
-  return out.join('\n');
-})();
-"""
 
 private val QUICK_SITES = listOf(
     "YouTube" to "https://m.youtube.com",
@@ -121,19 +89,6 @@ private val QUICK_SITES = listOf(
     "Pinterest" to "https://www.pinterest.com",
     "Vimeo" to "https://vimeo.com"
 )
-
-private fun classify(url: String): String? {
-    val lower = url.substringBefore("#").lowercase()
-    val path = lower.substringBefore("?")
-    return when {
-        path.endsWith(".m3u8") || path.endsWith(".mpd") -> "STREAM"
-        path.endsWith(".mp4") || path.endsWith(".webm") || path.endsWith(".mkv") ||
-            path.endsWith(".mov") || path.endsWith(".m4v") -> "VIDEO"
-        path.endsWith(".mp3") || path.endsWith(".m4a") || path.endsWith(".aac") ||
-            path.endsWith(".ogg") || path.endsWith(".wav") || path.endsWith(".flac") -> "AUDIO"
-        else -> null
-    }
-}
 
 private fun hostOf(url: String): String {
     return try {
@@ -177,55 +132,27 @@ private fun kindLabel(kind: String): String = when (kind) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserScreen(
-    visible: Boolean,
     onOpenDownloads: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
+    val context = LocalContext.current
     val addSheetState by viewModel.addSheetState.collectAsState()
     val networkState by viewModel.networkState.collectAsState()
 
-    var showStart by rememberSaveable { mutableStateOf(true) }
-    var currentUrl by rememberSaveable { mutableStateOf("") }
-    var urlText by rememberSaveable { mutableStateOf("") }
-    var progress by remember { mutableIntStateOf(100) }
-    var canGoBack by remember { mutableStateOf(false) }
-    var pageTitle by remember { mutableStateOf("") }
-    var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var showFound by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
-    val found = remember { mutableStateListOf<SniffedMedia>() }
 
     fun openUrl(raw: String) {
         val target = normalizeInput(raw)
-        showStart = false
-        urlText = target
-        webViewRef?.loadUrl(target)
-    }
-
-    fun addFound(url: String, kind: String, referer: String) {
-        if (found.size >= 80) return
-        if (found.none { it.url == url }) found.add(SniffedMedia(url, kind, referer))
-    }
-
-    fun scanPage(view: WebView) {
-        view.evaluateJavascript(SCAN_JS) { raw ->
-            val text = try {
-                (JSONTokener(raw).nextValue() as? String) ?: ""
-            } catch (e: Exception) {
-                ""
-            }
-            val referer = view.url ?: ""
-            text.split("\n").forEach { line ->
-                val idx = line.indexOf('|')
-                if (idx > 0) addFound(line.substring(idx + 1), line.substring(0, idx), referer)
-            }
-        }
+        BrowserState.showStart = false
+        BrowserState.urlText = target
+        BrowserHolder.current()?.loadUrl(target)
     }
 
     fun startDownload(media: SniffedMedia) {
         val headers = HashMap<String, String>()
-        headers["Referer"] = media.referer.ifBlank { currentUrl }
-        val agent = webViewRef?.settings?.userAgentString
+        headers["Referer"] = media.referer.ifBlank { BrowserState.currentUrl }
+        val agent = BrowserHolder.current()?.settings?.userAgentString
         if (!agent.isNullOrBlank()) headers["User-Agent"] = agent
         val cookie = CookieManager.getInstance().getCookie(media.url)
         if (!cookie.isNullOrBlank()) headers["Cookie"] = cookie
@@ -243,7 +170,7 @@ fun BrowserScreen(
         )
         val meta = MediaMetadata(
             url = media.url,
-            title = pageTitle.ifBlank { hostOf(media.url) }.take(80),
+            title = BrowserState.pageTitle.ifBlank { hostOf(media.url) }.take(80),
             thumbnailUrl = if (media.kind == "IMAGE") media.url else null,
             durationSeconds = 0L,
             site = hostOf(media.url),
@@ -254,25 +181,20 @@ fun BrowserScreen(
         if (networkState.isWifi) toast = "Added to downloads"
     }
 
-    BackHandler(enabled = visible && (canGoBack || !showStart)) {
-        if (!showStart && canGoBack) {
-            webViewRef?.goBack()
+    BackHandler(enabled = BrowserState.canGoBack || !BrowserState.showStart) {
+        val web = BrowserHolder.current()
+        if (!BrowserState.showStart && web != null && web.canGoBack()) {
+            web.goBack()
         } else {
-            showStart = true
+            BrowserState.showStart = true
         }
     }
 
-    // A hidden browser must not keep playing sound
-    LaunchedEffect(visible, webViewRef) {
-        val view = webViewRef
-        if (view != null) {
-            if (visible) {
-                view.onResume()
-                view.resumeTimers()
-            } else {
-                view.onPause()
-                view.pauseTimers()
-            }
+    // a download link tapped inside a page opens the found list
+    LaunchedEffect(BrowserState.openFoundSheet) {
+        if (BrowserState.openFoundSheet) {
+            showFound = true
+            BrowserState.openFoundSheet = false
         }
     }
 
@@ -283,10 +205,6 @@ fun BrowserScreen(
         }
     }
 
-    DisposableEffect(Unit) {
-        onDispose { webViewRef?.destroy() }
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -295,32 +213,27 @@ fun BrowserScreen(
         Column(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = urlText,
-                        onValueChange = { urlText = it },
-                        placeholder = { Text("Search or type a link", color = TextMuted) },
+                    PillTextField(
+                        value = BrowserState.urlText,
+                        onValueChange = { BrowserState.urlText = it },
+                        placeholder = "Search or type a link",
                         modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        shape = RoundedCornerShape(16.dp),
-                        leadingIcon = {
-                            Icon(Icons.Default.Search, contentDescription = null, tint = TextSecondary)
+                        leading = {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                tint = TextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
                         },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = DarkSurface,
-                            unfocusedContainerColor = DarkSurface,
-                            focusedBorderColor = TextSecondary,
-                            unfocusedBorderColor = DarkBorder,
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary,
-                            cursorColor = TextPrimary
-                        ),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, keyboardType = KeyboardType.Uri),
-                        keyboardActions = KeyboardActions(onGo = {
-                            if (urlText.isNotBlank()) openUrl(urlText)
-                        })
+                        keyboardType = KeyboardType.Uri,
+                        imeAction = ImeAction.Go,
+                        onImeAction = {
+                            if (BrowserState.urlText.isNotBlank()) openUrl(BrowserState.urlText)
+                        }
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    FoundBadge(count = found.size, onClick = { showFound = true })
+                    FoundBadge(count = BrowserState.found.size, onClick = { showFound = true })
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -334,31 +247,33 @@ fun BrowserScreen(
                         icon = Icons.Default.Home,
                         description = "Start page",
                         size = 36.dp,
-                        onClick = { showStart = true }
+                        onClick = { BrowserState.showStart = true }
                     )
                     CircleActionButton(
                         icon = Icons.AutoMirrored.Filled.ArrowBack,
                         description = "Back",
                         size = 36.dp,
-                        onClick = { webViewRef?.goBack() }
+                        onClick = { BrowserHolder.current()?.goBack() }
                     )
                     CircleActionButton(
                         icon = Icons.AutoMirrored.Filled.ArrowForward,
                         description = "Forward",
                         size = 36.dp,
-                        onClick = { webViewRef?.goForward() }
+                        onClick = { BrowserHolder.current()?.goForward() }
                     )
                     CircleActionButton(
                         icon = Icons.Default.Refresh,
                         description = "Reload",
                         size = 36.dp,
-                        onClick = { webViewRef?.reload() }
+                        onClick = { BrowserHolder.current()?.reload() }
                     )
                     Spacer(modifier = Modifier.weight(1f))
                     SiphonSecondaryButton(
                         text = "Inspect page",
                         onClick = {
-                            if (currentUrl.isNotBlank()) viewModel.fetchLinkInfo(currentUrl)
+                            if (BrowserState.currentUrl.isNotBlank()) {
+                                viewModel.fetchLinkInfo(BrowserState.currentUrl)
+                            }
                         }
                     )
                 }
@@ -366,9 +281,9 @@ fun BrowserScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            if (progress < 100 && !showStart) {
+            if (BrowserState.progress < 100 && !BrowserState.showStart) {
                 LinearProgressIndicator(
-                    progress = { progress / 100f },
+                    progress = { BrowserState.progress / 100f },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(2.dp),
@@ -387,82 +302,32 @@ fun BrowserScreen(
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
-                        WebView(ctx).apply {
-                            settings.javaScriptEnabled = true
-                            settings.domStorageEnabled = true
-                            settings.useWideViewPort = true
-                            settings.loadWithOverviewMode = true
-                            settings.allowFileAccess = false
-                            settings.allowContentAccess = false
-                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-
-                            val cookies = CookieManager.getInstance()
-                            cookies.setAcceptCookie(true)
-                            cookies.setAcceptThirdPartyCookies(this, true)
-
-                            webViewClient = object : WebViewClient() {
-                                override fun shouldInterceptRequest(
-                                    view: WebView?,
-                                    request: WebResourceRequest?
-                                ): WebResourceResponse? {
-                                    val url = request?.url?.toString()
-                                    if (url != null && view != null) {
-                                        val kind = classify(url)
-                                        if (kind != null) {
-                                            val referer = request.requestHeaders["Referer"] ?: view.url ?: ""
-                                            view.post { addFound(url, kind, referer) }
-                                        }
-                                    }
-                                    return null
-                                }
-
-                                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                                    if (url != null && url != "about:blank") {
-                                        currentUrl = url
-                                        urlText = url
-                                        showStart = false
-                                    }
-                                    found.clear()
-                                }
-
-                                override fun onPageFinished(view: WebView?, url: String?) {
-                                    if (view != null && url != "about:blank") {
-                                        scanPage(view)
-                                        view.postDelayed({ scanPage(view) }, 2500)
-                                    }
-                                }
-
-                                override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
-                                    canGoBack = view?.canGoBack() == true
-                                }
-                            }
-
-                            webChromeClient = object : WebChromeClient() {
-                                override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                                    progress = newProgress
-                                }
-
-                                override fun onReceivedTitle(view: WebView?, title: String?) {
-                                    pageTitle = title ?: ""
-                                }
-                            }
-
-                            setDownloadListener { url, _, _, _, _ ->
-                                post {
-                                    addFound(url, "FILE", currentUrl)
-                                    showFound = true
-                                }
-                            }
-
-                            webViewRef = this
-                            if (currentUrl.isNotBlank()) {
-                                loadUrl(currentUrl)
-                            }
+                        val container = FrameLayout(ctx)
+                        val web = BrowserHolder.obtain(ctx)
+                        (web.parent as? ViewGroup)?.removeView(web)
+                        container.addView(
+                            web,
+                            FrameLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+                        )
+                        web.onResume()
+                        web.resumeTimers()
+                        if (!BrowserState.showStart && web.url == null && BrowserState.currentUrl.isNotBlank()) {
+                            web.loadUrl(BrowserState.currentUrl)
                         }
+                        container
+                    },
+                    onRelease = { container ->
+                        // leaving the tab: stop sound and timers, but keep the page alive
+                        BrowserHolder.current()?.onPause()
+                        container.removeAllViews()
+                        BrowserHolder.detach(context.applicationContext)
                     }
                 )
 
-                if (showStart) {
+                if (BrowserState.showStart) {
                     StartPage(onOpen = { openUrl(it) })
                 }
 
@@ -513,13 +378,13 @@ fun BrowserScreen(
                     color = TextPrimary
                 )
                 Text(
-                    text = "${found.size} items",
+                    text = "${BrowserState.found.size} items",
                     fontSize = 12.sp,
                     color = TextSecondary
                 )
                 Spacer(modifier = Modifier.height(12.dp))
 
-                if (found.isEmpty()) {
+                if (BrowserState.found.isEmpty()) {
                     Text(
                         text = "Nothing yet. Press play on the video or scroll the page, then open this again.",
                         fontSize = 13.sp,
@@ -530,7 +395,7 @@ fun BrowserScreen(
                         modifier = Modifier.heightIn(max = 420.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(found.toList(), key = { it.url }) { media ->
+                        items(BrowserState.found.toList(), key = { it.url }) { media ->
                             FoundRow(
                                 media = media,
                                 onDownload = {

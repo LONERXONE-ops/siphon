@@ -132,7 +132,7 @@ class StorageManagerImpl @Inject constructor(
 
             inputStream.use { inp ->
                 outputStream.use { out ->
-                    val buffer = ByteArray(64 * 1024)
+                    val buffer = ByteArray(512 * 1024)
                     var read: Int
                     var lastReport = 0L
                     while (inp.read(buffer).also { read = it } != -1) {
@@ -201,7 +201,7 @@ class StorageManagerImpl @Inject constructor(
                 val output = resolver.openOutputStream(uri)
                     ?: throw IOException("Could not open the new file for writing")
                 output.use { out ->
-                    val buffer = ByteArray(64 * 1024)
+                    val buffer = ByteArray(512 * 1024)
                     while (true) {
                         val read = input.read(buffer)
                         if (read == -1) break

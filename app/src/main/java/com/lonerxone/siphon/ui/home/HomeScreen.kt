@@ -71,6 +71,7 @@ import com.lonerxone.siphon.data.db.entity.DownloadItem
 import com.lonerxone.siphon.data.update.UpdateUiState
 import com.lonerxone.siphon.ui.components.BrandMark
 import com.lonerxone.siphon.ui.components.MediaThumbnail
+import com.lonerxone.siphon.ui.components.LinkOmnibox
 import com.lonerxone.siphon.ui.components.NetworkIndicator
 import com.lonerxone.siphon.ui.components.SiphonCard
 import com.lonerxone.siphon.ui.components.SiphonPrimaryButton
@@ -353,7 +354,7 @@ private fun NetworkPill(isWifi: Boolean) {
 }
 
 @Composable
-private fun LinkOmnibox(
+private fun LegacyLinkOmnibox(
     urlInput: String,
     onUrlChange: (String) -> Unit,
     onPaste: () -> Unit,

@@ -1,14 +1,10 @@
 package com.lonerxone.siphon.ui.navigation
 
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -17,11 +13,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -47,14 +39,6 @@ fun SiphonNavHost(sharedUrl: String? = null) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
-
-    // The browser is created on first visit and then kept alive, so its page and sound state survive tab changes
-    var browserOpened by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(currentRoute) {
-        if (currentRoute == Screen.Browser.route) browserOpened = true
-    }
-    val browserVisible = currentRoute == Screen.Browser.route
-    val showBrowser = browserOpened || browserVisible
 
     val screens = listOf(
         Screen.Home,
@@ -110,51 +94,32 @@ fun SiphonNavHost(sharedUrl: String? = null) {
             }
         }
     ) { innerPadding ->
-        Box(
+        NavHost(
+            navController = navController,
+            startDestination = Screen.Home.route,
             modifier = Modifier
                 .padding(innerPadding)
-                .fillMaxSize()
+                .fillMaxSize(),
+            enterTransition = { EnterTransition.None },
+            exitTransition = { ExitTransition.None }
         ) {
-            NavHost(
-                navController = navController,
-                startDestination = Screen.Home.route,
-                modifier = Modifier.fillMaxSize(),
-                enterTransition = { fadeIn(animationSpec = tween(180)) },
-                exitTransition = { fadeOut(animationSpec = tween(100)) }
-            ) {
-                composable(Screen.Home.route) {
-                    HomeScreen(
-                        sharedUrl = sharedUrl,
-                        onOpenBrowser = { navigateTo(Screen.Browser.route) }
-                    )
-                }
-                composable(Screen.Waitlist.route) {
-                    WaitlistScreen()
-                }
-                composable(Screen.Browser.route) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(DarkBackground)
-                    )
-                }
-                composable(Screen.Library.route) {
-                    LibraryScreen()
-                }
-                composable(Screen.Settings.route) {
-                    SettingsScreen()
-                }
+            composable(Screen.Home.route) {
+                HomeScreen(
+                    sharedUrl = sharedUrl,
+                    onOpenBrowser = { navigateTo(Screen.Browser.route) }
+                )
             }
-
-            if (showBrowser) {
-                Box(
-                    modifier = if (browserVisible) Modifier.fillMaxSize() else Modifier.size(0.dp)
-                ) {
-                    BrowserScreen(
-                        visible = browserVisible,
-                        onOpenDownloads = { navigateTo(Screen.Home.route) }
-                    )
-                }
+            composable(Screen.Waitlist.route) {
+                WaitlistScreen()
+            }
+            composable(Screen.Browser.route) {
+                BrowserScreen(onOpenDownloads = { navigateTo(Screen.Home.route) })
+            }
+            composable(Screen.Library.route) {
+                LibraryScreen()
+            }
+            composable(Screen.Settings.route) {
+                SettingsScreen()
             }
         }
     }

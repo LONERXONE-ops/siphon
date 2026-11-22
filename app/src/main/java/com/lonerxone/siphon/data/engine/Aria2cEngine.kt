@@ -11,7 +11,6 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
@@ -40,12 +39,12 @@ class Aria2cEngine @Inject constructor(
 
     override suspend fun fetchMetadata(url: String): Result<MediaMetadata> = withContext(Dispatchers.IO) {
         try {
-            var conn = open(url, "HEAD", 0L)
+            var conn = open(url, "HEAD")
             var code = conn.responseCode
             if (code !in 200..299) {
                 // some servers refuse HEAD requests
                 conn.disconnect()
-                conn = open(url, "GET", 0L)
+                conn = open(url, "GET")
                 code = conn.responseCode
             }
             if (code !in 200..299) {
@@ -109,81 +108,38 @@ class Aria2cEngine @Inject constructor(
 
             val base = request.customFileName ?: baseNameFor(request.url, null)
             val part = File(request.outputDir, "$base.part")
-            var startAt = if (part.exists()) part.length() else 0L
 
-            var conn = open(request.url, "GET", startAt)
-            var code = conn.responseCode
-            if (code == 416) {
-                // the partial file is no longer valid, start again
-                conn.disconnect()
-                part.delete()
-                startAt = 0L
-                conn = open(request.url, "GET", 0L)
-                code = conn.responseCode
-            }
-            if (code != 200 && code != 206) {
-                conn.disconnect()
-                throw IllegalStateException("Server returned HTTP $code")
+            val headers = LinkedHashMap<String, String>()
+            headers["User-Agent"] = defaultUserAgent
+            headers["Accept"] = "*/*"
+            RequestHeaderRegistry.get(request.url)?.forEach { (name, value) ->
+                if (value.isNotBlank()) headers[name] = value
             }
 
-            val resumed = code == 206 && startAt > 0L
-            if (!resumed) startAt = 0L
-
-            val contentType = (conn.contentType ?: "").substringBefore(";").trim().lowercase()
-            val disposition = conn.getHeaderField("Content-Disposition")
-            val remaining = conn.contentLengthLong
-            val total = if (remaining > 0L) remaining + startAt else 0L
-
-            var done = startAt
-            var lastUpdate = System.currentTimeMillis()
-            var lastBytes = done
-
-            try {
-                conn.inputStream.use { input ->
-                    FileOutputStream(part, resumed).use { output ->
-                        val buffer = ByteArray(64 * 1024)
-                        while (true) {
-                            if (activeStreams[request.id] == true) {
-                                output.flush()
-                                return@withContext Result.failure(Exception("Download paused by user"))
-                            }
-                            val read = input.read(buffer)
-                            if (read == -1) break
-                            output.write(buffer, 0, read)
-                            done += read
-
-                            val now = System.currentTimeMillis()
-                            if (now - lastUpdate >= 500) {
-                                val seconds = (now - lastUpdate) / 1000.0
-                                val speed = if (seconds > 0) ((done - lastBytes) / seconds).toLong() else 0L
-                                val left = if (total > done) total - done else 0L
-                                val eta = if (speed > 0) left / speed else 0L
-                                val percent = if (total > 0) done * 100f / total else 0f
-                                onProgress(
-                                    DownloadProgress(
-                                        progressPercent = percent,
-                                        bytesDownloaded = done,
-                                        totalBytes = total,
-                                        speedBps = speed,
-                                        etaSeconds = eta
-                                    )
-                                )
-                                lastUpdate = now
-                                lastBytes = done
-                            }
-                        }
-                        output.flush()
-                    }
+            val result = HttpDownloader.download(
+                url = request.url,
+                headers = headers,
+                partFile = part,
+                isCancelled = { activeStreams[request.id] == true },
+                onProgress = { done, total, speed ->
+                    val percent = if (total > 0L) done * 100f / total else 0f
+                    val eta = if (speed > 0L && total > done) (total - done) / speed else 0L
+                    onProgress(
+                        DownloadProgress(
+                            progressPercent = percent,
+                            bytesDownloaded = done,
+                            totalBytes = total,
+                            speedBps = speed,
+                            etaSeconds = eta
+                        )
+                    )
                 }
-            } finally {
-                conn.disconnect()
-            }
+            )
 
-            if (total > 0L && done < total) {
-                throw IOException("Connection closed early")
-            }
-
-            val finalName = withExtension(baseNameFor(request.url, disposition, request.customFileName), contentType)
+            val finalName = withExtension(
+                baseNameFor(request.url, result.contentDisposition, request.customFileName),
+                result.contentType
+            )
             val finalFile = File(request.outputDir, finalName)
             if (finalFile.exists()) finalFile.delete()
             if (!part.renameTo(finalFile)) throw IOException("Could not finish the file")
@@ -191,14 +147,16 @@ class Aria2cEngine @Inject constructor(
             onProgress(
                 DownloadProgress(
                     progressPercent = 100f,
-                    bytesDownloaded = done,
-                    totalBytes = done,
+                    bytesDownloaded = result.bytes,
+                    totalBytes = result.bytes,
                     speedBps = 0L,
                     etaSeconds = 0L
                 )
             )
 
             Result.success(finalFile)
+        } catch (e: DownloadPausedException) {
+            Result.failure(Exception("Download paused by user"))
         } catch (e: Exception) {
             Result.failure(e)
         } finally {
@@ -223,21 +181,7 @@ class Aria2cEngine @Inject constructor(
 
     // ---------------------------------------------------------------- helpers
 
-    private fun applyHeaders(conn: HttpURLConnection, url: String) {
-        conn.setRequestProperty("User-Agent", defaultUserAgent)
-        conn.setRequestProperty("Accept", "*/*")
-        conn.setRequestProperty("Accept-Encoding", "identity")
-        RequestHeaderRegistry.get(url)?.forEach { (name, value) ->
-            if (value.isNotBlank() &&
-                !name.equals("Accept-Encoding", ignoreCase = true) &&
-                !name.equals("Range", ignoreCase = true)
-            ) {
-                conn.setRequestProperty(name, value)
-            }
-        }
-    }
-
-    private fun open(url: String, method: String, rangeStart: Long): HttpURLConnection {
+    private fun open(url: String, method: String): HttpURLConnection {
         var current = url
         repeat(6) {
             val conn = (URL(current).openConnection() as HttpURLConnection).apply {
@@ -245,9 +189,18 @@ class Aria2cEngine @Inject constructor(
                 connectTimeout = 15000
                 readTimeout = 30000
                 instanceFollowRedirects = false
+                setRequestProperty("User-Agent", defaultUserAgent)
+                setRequestProperty("Accept", "*/*")
+                setRequestProperty("Accept-Encoding", "identity")
             }
-            applyHeaders(conn, url)
-            if (rangeStart > 0L) conn.setRequestProperty("Range", "bytes=$rangeStart-")
+            RequestHeaderRegistry.get(url)?.forEach { (name, value) ->
+                if (value.isNotBlank() &&
+                    !name.equals("Accept-Encoding", ignoreCase = true) &&
+                    !name.equals("Range", ignoreCase = true)
+                ) {
+                    conn.setRequestProperty(name, value)
+                }
+            }
 
             val code = conn.responseCode
             if (code in 300..399) {

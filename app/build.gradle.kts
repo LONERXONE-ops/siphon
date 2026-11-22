@@ -54,7 +54,10 @@ android {
             "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
             "-opt-in=androidx.compose.ui.ExperimentalComposeUiApi",
             "-opt-in=androidx.compose.animation.ExperimentalAnimationApi",
-            "-opt-in=androidx.media3.common.util.UnstableApi"
+            "-opt-in=androidx.media3.common.util.UnstableApi",
+            "-Xno-param-assertions",
+            "-Xno-call-assertions",
+            "-Xno-receiver-assertions"
         )
     }
     buildFeatures {

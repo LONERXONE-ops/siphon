@@ -321,7 +321,7 @@ class YtDlpEngine @Inject constructor(
                 val source = directSourceFor(infoFile, fid)
                 if (source != null) {
                     try {
-                        val file = downloadDirect(request, source, onProgress)
+                        val file = downloadDirectFast(request, source, onProgress)
                         return@withContext Result.success(file)
                     } catch (e: Exception) {
                         if (pausedIds.contains(request.id)) {
@@ -483,6 +483,48 @@ class YtDlpEngine @Inject constructor(
             directConnections.remove(request.id)
             conn.disconnect()
         }
+    }
+
+    private fun downloadDirectFast(
+        request: DownloadRequest,
+        source: DirectSource,
+        onProgress: (DownloadProgress) -> Unit
+    ): File {
+        val target = File(request.outputDir, source.fileName)
+        val part = File(request.outputDir, source.fileName + ".part")
+
+        val result = HttpDownloader.download(
+            url = source.url,
+            headers = source.headers,
+            partFile = part,
+            isCancelled = { pausedIds.contains(request.id) },
+            onProgress = { done, total, speed ->
+                val percent = if (total > 0L) done * 100f / total else 0f
+                val eta = if (speed > 0L && total > done) (total - done) / speed else 0L
+                onProgress(
+                    DownloadProgress(
+                        progressPercent = percent,
+                        bytesDownloaded = done,
+                        totalBytes = total,
+                        speedBps = speed,
+                        etaSeconds = eta
+                    )
+                )
+            }
+        )
+
+        if (target.exists()) target.delete()
+        if (!part.renameTo(target)) throw IOException("Could not finish the file")
+        onProgress(
+            DownloadProgress(
+                progressPercent = 100f,
+                bytesDownloaded = result.bytes,
+                totalBytes = result.bytes,
+                speedBps = 0L,
+                etaSeconds = 0L
+            )
+        )
+        return target
     }
 
     private fun runYtDlp(

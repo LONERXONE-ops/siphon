@@ -1,10 +1,17 @@
 package com.lonerxone.siphon.ui.home.components
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,9 +37,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -40,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -48,13 +57,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.lonerxone.siphon.data.engine.model.MediaFormat
 import com.lonerxone.siphon.data.engine.model.MediaMetadata
 import com.lonerxone.siphon.ui.components.SiphonPrimaryButton
@@ -69,6 +81,7 @@ import com.lonerxone.siphon.ui.theme.PrimaryGradientStart
 import com.lonerxone.siphon.ui.theme.TextMuted
 import com.lonerxone.siphon.ui.theme.TextPrimary
 import com.lonerxone.siphon.ui.theme.TextSecondary
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -95,121 +108,199 @@ fun AddLinkBottomSheet(
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 32.dp)
+                .animateContentSize(animationSpec = tween(260))
         ) {
-            when (uiState) {
-                is AddSheetUiState.Loading -> LoadingContent()
+            AnimatedContent(
+                targetState = uiState,
+                contentKey = { it::class },
+                transitionSpec = { fadeIn(tween(280)) togetherWith fadeOut(tween(140)) },
+                label = "sheetContent"
+            ) { state ->
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    when (state) {
+                        is AddSheetUiState.Loading -> FetchingContent()
 
-                is AddSheetUiState.Error -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "Couldn't read this link",
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary,
-                            fontSize = 17.sp
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = uiState.message,
-                            color = TextSecondary,
-                            fontSize = 13.sp
-                        )
-                        Spacer(modifier = Modifier.height(20.dp))
-                        SiphonSecondaryButton(
-                            text = "Close",
-                            onClick = onDismiss,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
-
-                is AddSheetUiState.MetadataLoaded -> {
-                    val metadata = uiState.metadata
-                    val isSelectionMode = metadata.formats.isNotEmpty() && metadata.formats.all {
-                        it.formatId.startsWith("img:") || it.formatId.startsWith("vid:")
-                    }
-                    if (isSelectionMode) {
-                        SelectionContent(
-                            metadata = metadata,
-                            onDownloadSelected = onDownloadSelected
-                        )
-                    } else {
-                        MetadataContent(
-                            metadata = metadata,
-                            onDownloadNow = onDownloadNow,
-                            onDownloadLater = onDownloadLater
-                        )
-                    }
-                }
-
-                is AddSheetUiState.MobileDataWarning -> {
-                    Spacer(modifier = Modifier.height(120.dp))
-                    AlertDialog(
-                        onDismissRequest = onDismiss,
-                        title = {
-                            Text(text = "You're on mobile data", fontWeight = FontWeight.Bold, color = TextPrimary)
-                        },
-                        text = {
-                            Text(
-                                text = "This download will use about ${uiState.sizeFormatted} of mobile data. Download anyway?",
-                                color = TextSecondary,
-                                fontSize = 14.sp
-                            )
-                        },
-                        confirmButton = {
-                            SiphonPrimaryButton(
-                                text = "Download anyway",
-                                onClick = { onConfirmMobileData(uiState.metadata, uiState.formatId) }
-                            )
-                        },
-                        dismissButton = {
-                            TextButton(
-                                onClick = { onDownloadLater(uiState.metadata, uiState.formatId, null) }
+                        is AddSheetUiState.Error -> {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Text(text = "Wait for Wi-Fi", color = AccentWarning)
+                                Text(
+                                    text = "Couldn't read this link",
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary,
+                                    fontSize = 17.sp
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = state.message,
+                                    color = TextSecondary,
+                                    fontSize = 13.sp
+                                )
+                                Spacer(modifier = Modifier.height(20.dp))
+                                SiphonSecondaryButton(
+                                    text = "Close",
+                                    onClick = onDismiss,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                             }
-                        },
-                        containerColor = DarkElevated
-                    )
-                }
+                        }
 
-                else -> {}
+                        is AddSheetUiState.MetadataLoaded -> {
+                            val metadata = state.metadata
+                            val isSelectionMode = metadata.formats.isNotEmpty() && metadata.formats.all {
+                                it.formatId.startsWith("img:") || it.formatId.startsWith("vid:")
+                            }
+                            if (isSelectionMode) {
+                                SelectionContent(
+                                    metadata = metadata,
+                                    onDownloadSelected = onDownloadSelected
+                                )
+                            } else {
+                                MetadataContent(
+                                    metadata = metadata,
+                                    onDownloadNow = onDownloadNow,
+                                    onDownloadLater = onDownloadLater
+                                )
+                            }
+                        }
+
+                        is AddSheetUiState.MobileDataWarning -> {
+                            Spacer(modifier = Modifier.height(120.dp))
+                            AlertDialog(
+                                onDismissRequest = onDismiss,
+                                title = {
+                                    Text(text = "You're on mobile data", fontWeight = FontWeight.Bold, color = TextPrimary)
+                                },
+                                text = {
+                                    Text(
+                                        text = "This download will use about ${state.sizeFormatted} of mobile data. Download anyway?",
+                                        color = TextSecondary,
+                                        fontSize = 14.sp
+                                    )
+                                },
+                                confirmButton = {
+                                    SiphonPrimaryButton(
+                                        text = "Download anyway",
+                                        onClick = { onConfirmMobileData(state.metadata, state.formatId) }
+                                    )
+                                },
+                                dismissButton = {
+                                    TextButton(
+                                        onClick = { onDownloadLater(state.metadata, state.formatId, null) }
+                                    ) {
+                                        Text(text = "Wait for Wi-Fi", color = AccentWarning)
+                                    }
+                                },
+                                containerColor = DarkElevated
+                            )
+                        }
+
+                        else -> {}
+                    }
+                }
             }
         }
     }
 }
 
+/** The download arrow turns into a pulsing magnifier while the link is being read. */
 @Composable
-private fun LoadingContent() {
-    Column(modifier = Modifier.fillMaxWidth()) {
+private fun FetchingContent() {
+    var showSearch by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(550)
+        showSearch = true
+    }
+
+    val transition = rememberInfiniteTransition(label = "fetching")
+    val pulse by transition.animateFloat(
+        initialValue = 0.92f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(750, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse"
+    )
+    val ring by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "ring"
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier.size(100.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(64.dp + 34.dp * ring)
+                    .clip(CircleShape)
+                    .border(1.dp, TextPrimary.copy(alpha = (1f - ring) * 0.35f), CircleShape)
+            )
+            Box(
+                modifier = Modifier
+                    .size(64.dp)
+                    .scale(if (showSearch) pulse else 1f)
+                    .clip(CircleShape)
+                    .background(DarkElevated)
+                    .border(1.dp, DarkBorder, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Crossfade(
+                    targetState = showSearch,
+                    animationSpec = tween(450),
+                    label = "fetchIcon"
+                ) { search ->
+                    Icon(
+                        imageVector = if (search) Icons.Default.Search else Icons.Default.Download,
+                        contentDescription = null,
+                        tint = TextPrimary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = "Inspecting link...",
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = TextPrimary
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = "Looking for video, audio and images",
+            fontSize = 12.sp,
+            color = TextSecondary
+        )
+
+        Spacer(modifier = Modifier.height(22.dp))
+
         SkeletonBlock(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f)
                 .clip(RoundedCornerShape(18.dp))
         )
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
         SkeletonBlock(modifier = Modifier.fillMaxWidth(0.85f).height(16.dp))
         Spacer(modifier = Modifier.height(8.dp))
         SkeletonBlock(modifier = Modifier.fillMaxWidth(0.45f).height(12.dp))
-        Spacer(modifier = Modifier.height(24.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(16.dp),
-                strokeWidth = 2.dp,
-                color = PrimaryGradientStart
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Text(
-                text = "Inspecting link...",
-                color = TextSecondary,
-                fontSize = 13.sp
-            )
-        }
         Spacer(modifier = Modifier.height(16.dp))
     }
 }
@@ -384,6 +475,7 @@ private fun MetadataContent(
     onDownloadNow: (MediaMetadata, String?, String?) -> Unit,
     onDownloadLater: (MediaMetadata, String?, String?) -> Unit
 ) {
+    val context = LocalContext.current
     var selectedId by remember(metadata.url) {
         mutableStateOf(metadata.formats.firstOrNull()?.formatId)
     }
@@ -398,7 +490,10 @@ private fun MetadataContent(
     ) {
         if (!metadata.thumbnailUrl.isNullOrBlank()) {
             AsyncImage(
-                model = metadata.thumbnailUrl,
+                model = ImageRequest.Builder(context)
+                    .data(metadata.thumbnailUrl)
+                    .crossfade(400)
+                    .build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
