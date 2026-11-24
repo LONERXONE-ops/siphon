@@ -55,10 +55,22 @@ class YtDlpEngine @Inject constructor(
     private val activeProcesses = ConcurrentHashMap<String, String>()
     private val directConnections = ConcurrentHashMap<String, HttpURLConnection>()
     private val pausedIds = ConcurrentHashMap.newKeySet<String>()
+    private val metadataCache = ConcurrentHashMap<String, Pair<Long, MediaMetadata>>()
 
     // ---------------------------------------------------------------- metadata
 
-    override suspend fun fetchMetadata(url: String): Result<MediaMetadata> = withContext(Dispatchers.IO) {
+    override suspend fun fetchMetadata(url: String): Result<MediaMetadata> {
+        // the same link inspected again within 5 minutes is answered instantly
+        val cached = metadataCache[url]
+        if (cached != null && System.currentTimeMillis() - cached.first < 5L * 60 * 1000) {
+            return Result.success(cached.second)
+        }
+        val result = fetchMetadataUncached(url)
+        result.getOrNull()?.let { metadataCache[url] = Pair(System.currentTimeMillis(), it) }
+        return result
+    }
+
+    private suspend fun fetchMetadataUncached(url: String): Result<MediaMetadata> = withContext(Dispatchers.IO) {
         try {
             val siteName = extractDomain(url)
 
@@ -66,7 +78,7 @@ class YtDlpEngine @Inject constructor(
             val rawText = try {
                 runInfo(url)
             } catch (e: Exception) {
-                if (isExtractorProblem(e.message) && tryEngineUpdate()) runInfo(url) else throw e
+                runInfoRecover(url, e)
             }
 
             val jsonStart = rawText.indexOf('{')
@@ -137,6 +149,56 @@ class YtDlpEngine @Inject constructor(
             processId = "info-" + System.nanoTime()
         ) { _, _, _ -> }
         return response.out.trim()
+    }
+
+    private fun isYoutube(url: String): Boolean {
+        val host = try {
+            URI(url).host?.lowercase() ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+        return host.endsWith("youtube.com") || host == "youtu.be" || host.endsWith("youtube-nocookie.com")
+    }
+
+    private fun runInfoClient(url: String, client: String): String {
+        val request = YoutubeDLRequest(url).apply {
+            addOption("--dump-single-json")
+            addOption("--no-playlist")
+            addOption("--no-warnings")
+            addOption("--socket-timeout", "20")
+            addOption("--force-ipv4")
+            addOption("--extractor-args", "youtube:player_client=$client")
+        }
+        val response = YoutubeDL.getInstance().execute(
+            request = request,
+            processId = "info-" + System.nanoTime()
+        ) { _, _, _ -> }
+        return response.out.trim()
+    }
+
+    /** When the first attempt fails: update the engine, then try other YouTube clients. */
+    private fun runInfoRecover(url: String, first: Exception): String {
+        var lastError: Exception = first
+
+        if (isExtractorProblem(first.message) && tryEngineUpdate()) {
+            try {
+                return runInfo(url)
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+
+        if (isYoutube(url)) {
+            for (client in listOf("ios", "tv", "android_vr", "mweb")) {
+                try {
+                    return runInfoClient(url, client)
+                } catch (e: Exception) {
+                    lastError = e
+                }
+            }
+        }
+
+        throw lastError
     }
 
     private fun isExtractorProblem(message: String?): Boolean {
@@ -543,7 +605,7 @@ class YtDlpEngine @Inject constructor(
             if (infoFile != null) {
                 addOption("--load-info-json", infoFile.absolutePath)
                 addOption("--downloader", "libaria2c.so")
-                addOption("--external-downloader-args", "aria2c:-x 8 -s 8 -k 1M --file-allocation=none")
+                addOption("--external-downloader-args", "aria2c:-x 16 -s 16 -k 1M --min-split-size=1M --file-allocation=none")
             }
 
             val outTemplate = File(request.outputDir, "%(title).100s [%(id)s].%(ext)s").absolutePath
@@ -554,7 +616,7 @@ class YtDlpEngine @Inject constructor(
             addOption("--retries", "10")
             addOption("--fragment-retries", "10")
             addOption("--socket-timeout", "30")
-            addOption("--concurrent-fragments", "8")
+            addOption("--concurrent-fragments", "16")
             addOption("--force-ipv4")
             addOption("--add-metadata")
             addOption("--no-mtime")

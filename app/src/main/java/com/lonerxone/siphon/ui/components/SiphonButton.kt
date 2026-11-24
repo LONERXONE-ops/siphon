@@ -2,7 +2,6 @@ package com.lonerxone.siphon.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -34,12 +33,12 @@ fun SiphonPrimaryButton(
 ) {
     Box(
         modifier = modifier
+            .pressable(enabled = enabled, onClick = onClick)
             .clip(RoundedCornerShape(14.dp))
             .then(
                 if (enabled) Modifier.background(SiphonPrimaryGradient)
                 else Modifier.background(DarkElevated)
             )
-            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 13.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -68,10 +67,10 @@ fun SiphonSecondaryButton(
 ) {
     Box(
         modifier = modifier
+            .pressable(enabled = enabled, onClick = onClick)
             .clip(RoundedCornerShape(14.dp))
             .border(1.dp, DarkBorder, RoundedCornerShape(14.dp))
             .background(DarkElevated)
-            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 13.dp),
         contentAlignment = Alignment.Center
     ) {

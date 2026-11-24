@@ -69,6 +69,19 @@ fun SiphonTheme(
         colorScheme = colorScheme,
         typography = Typography,
         shapes = SiphonShapes,
-        content = content
+        content = {
+            val fontContext = androidx.compose.ui.platform.LocalContext.current
+            val fontFamily = androidx.compose.runtime.remember { loadSiphonFont(fontContext) }
+            if (fontFamily != null) {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.material3.LocalTextStyle provides androidx.compose.material3.LocalTextStyle.current.merge(
+                        androidx.compose.ui.text.TextStyle(fontFamily = fontFamily)
+                    ),
+                    content = content
+                )
+            } else {
+                content()
+            }
+        }
     )
 }

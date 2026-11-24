@@ -62,6 +62,10 @@ class HomeViewModel @Inject constructor(
     val recentCompleted: StateFlow<List<DownloadItem>> = repository.recentCompleted
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val libraryStats: StateFlow<Pair<Int, Long>> = repository.allCompleted
+        .map { list -> Pair(list.size, list.sumOf { maxOf(it.totalBytes, it.bytesDownloaded) }) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Pair(0, 0L))
+
     val networkState: StateFlow<NetworkState> = networkMonitor.networkState
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), NetworkState())
 

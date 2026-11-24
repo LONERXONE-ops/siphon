@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -31,7 +32,12 @@ class SettingsViewModel @Inject constructor(
 ) : ViewModel() {
 
     val userPreferences: StateFlow<UserPreferences> = preferencesRepository.userPreferencesFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UserPreferences())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, UserPreferences())
+
+    /** False until the saved settings have really been read, so the screen never shows placeholder values. */
+    val preferencesLoaded: StateFlow<Boolean> = preferencesRepository.userPreferencesFlow
+        .map { true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _engineUpdateState = MutableStateFlow<EngineUpdateState>(EngineUpdateState.Idle)
     val engineUpdateState: StateFlow<EngineUpdateState> = _engineUpdateState.asStateFlow()

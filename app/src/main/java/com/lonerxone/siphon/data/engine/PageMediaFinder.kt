@@ -28,6 +28,9 @@ class PageMediaFinder @Inject constructor() {
     suspend fun find(pageUrl: String): Result<MediaMetadata> = withContext(Dispatchers.IO) {
         try {
             val host = hostOf(pageUrl)
+            if (isVideoSite(host, pageUrl)) {
+                throw IllegalStateException("This is a video page, so its preview pictures are not offered.")
+            }
             val images = LinkedHashSet<String>()
             val videos = LinkedHashSet<String>()
             var title = ""
@@ -198,6 +201,7 @@ class PageMediaFinder @Inject constructor() {
         }
 
         var ogTitle = ""
+        var isVideoType = false
 
         for (m in Regex("""<meta\s[^>]*>""", RegexOption.IGNORE_CASE).findAll(html)) {
             val tag = m.value
@@ -209,6 +213,7 @@ class PageMediaFinder @Inject constructor() {
                 "og:video", "og:video:url", "og:video:secure_url", "twitter:player:stream" ->
                     resolve(content)?.let { videos.add(it) }
                 "og:title" -> if (content != null) ogTitle = content
+                "og:type" -> if (content != null && content.lowercase().startsWith("video")) isVideoType = true
             }
         }
 
@@ -236,6 +241,7 @@ class PageMediaFinder @Inject constructor() {
         val title = (if (ogTitle.isNotBlank()) ogTitle else pageTitle)
             .replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'").take(100)
 
+        if (isVideoType) return ScanResult(title, emptyList(), videos.toList().take(10))
         return ScanResult(title, images.toList().take(40), videos.toList().take(10))
     }
 
@@ -246,6 +252,15 @@ class PageMediaFinder @Inject constructor() {
         if (ext in known) return ext
         val format = Regex("""format=([a-z0-9]+)""").find(url.lowercase())?.groupValues?.get(1)
         return if (format != null && format in known) format else fallback
+    }
+
+    private fun isVideoSite(host: String, url: String): Boolean {
+        val h = host.lowercase()
+        val lower = url.lowercase()
+        return h.endsWith("youtube.com") || h == "youtu.be" || h.endsWith("tiktok.com") ||
+            h.endsWith("vimeo.com") || h.endsWith("dailymotion.com") || h.endsWith("twitch.tv") ||
+            (h.endsWith("facebook.com") && (lower.contains("/watch") || lower.contains("/reel") || lower.contains("/videos"))) ||
+            (h.endsWith("instagram.com") && (lower.contains("/reel") || lower.contains("/tv/")))
     }
 
     private fun hostOf(url: String): String {

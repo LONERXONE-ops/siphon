@@ -26,26 +26,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.BatteryAlert
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,13 +47,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,8 +58,8 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.lonerxone.siphon.data.db.entity.DownloadItem
 import com.lonerxone.siphon.data.update.UpdateUiState
 import com.lonerxone.siphon.ui.components.BrandMark
-import com.lonerxone.siphon.ui.components.MediaThumbnail
 import com.lonerxone.siphon.ui.components.LinkOmnibox
+import com.lonerxone.siphon.ui.components.MediaThumbnail
 import com.lonerxone.siphon.ui.components.NetworkIndicator
 import com.lonerxone.siphon.ui.components.SiphonCard
 import com.lonerxone.siphon.ui.components.SiphonPrimaryButton
@@ -80,33 +68,41 @@ import com.lonerxone.siphon.ui.components.describeSaveLocation
 import com.lonerxone.siphon.ui.components.formatFileSize
 import com.lonerxone.siphon.ui.components.mediaKindOf
 import com.lonerxone.siphon.ui.components.openMedia
+import com.lonerxone.siphon.ui.components.pressable
 import com.lonerxone.siphon.ui.home.components.ActiveDownloadCard
-import com.lonerxone.siphon.ui.home.components.AddLinkBottomSheet
 import com.lonerxone.siphon.ui.theme.AccentError
 import com.lonerxone.siphon.ui.theme.AccentWarning
 import com.lonerxone.siphon.ui.theme.DarkBackground
 import com.lonerxone.siphon.ui.theme.DarkBorder
 import com.lonerxone.siphon.ui.theme.DarkElevated
 import com.lonerxone.siphon.ui.theme.DarkSurface
-import com.lonerxone.siphon.ui.theme.OnAccent
-import com.lonerxone.siphon.ui.theme.SiphonPrimaryGradient
 import com.lonerxone.siphon.ui.theme.TextMuted
 import com.lonerxone.siphon.ui.theme.TextPrimary
 import com.lonerxone.siphon.ui.theme.TextSecondary
+import java.util.Calendar
+
+private fun greeting(): String {
+    val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+    return when {
+        hour < 5 -> "Late night"
+        hour < 12 -> "Good morning"
+        hour < 17 -> "Good afternoon"
+        else -> "Good evening"
+    }
+}
 
 @Composable
 fun HomeScreen(
-    viewModel: HomeViewModel = hiltViewModel(),
-    sharedUrl: String? = null,
-    onOpenBrowser: () -> Unit = {}
+    onOpenBrowser: () -> Unit = {},
+    viewModel: HomeViewModel = hiltViewModel()
 ) {
     val activeDownloads by viewModel.activeDownloads.collectAsState()
     val failedDownloads by viewModel.failedDownloads.collectAsState()
     val recentCompleted by viewModel.recentCompleted.collectAsState()
-    val addSheetState by viewModel.addSheetState.collectAsState()
     val engineUpdating by viewModel.engineUpdating.collectAsState()
     val networkState by viewModel.networkState.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
+    val libraryStats by viewModel.libraryStats.collectAsState()
     val context = LocalContext.current
 
     var urlInput by remember { mutableStateOf("") }
@@ -128,12 +124,7 @@ fun HomeScreen(
         onPauseOrDispose { }
     }
 
-    LaunchedEffect(sharedUrl) {
-        if (!sharedUrl.isNullOrBlank()) {
-            urlInput = sharedUrl
-            viewModel.fetchLinkInfo(sharedUrl)
-        }
-    }
+    val (fileCount, totalBytes) = libraryStats
 
     Box(
         modifier = Modifier
@@ -165,7 +156,7 @@ fun HomeScreen(
                                 color = TextPrimary
                             )
                             Text(
-                                text = "Download anything",
+                                text = greeting(),
                                 fontSize = 11.sp,
                                 color = TextSecondary
                             )
@@ -220,12 +211,16 @@ fun HomeScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    text = "Video  •  Audio  •  Images  •  Files",
-                    fontSize = 11.sp,
-                    color = TextMuted
-                )
+                Spacer(modifier = Modifier.height(18.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    StatTile(label = "Active", value = "${activeDownloads.size}", modifier = Modifier.weight(1f))
+                    StatTile(label = "Files", value = "$fileCount", modifier = Modifier.weight(1f))
+                    StatTile(label = "Saved", value = formatFileSize(totalBytes), modifier = Modifier.weight(1f))
+                }
 
                 if (showBatteryCard) {
                     Spacer(modifier = Modifier.height(16.dp))
@@ -244,7 +239,7 @@ fun HomeScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(30.dp))
+                Spacer(modifier = Modifier.height(28.dp))
                 SectionHeader(title = "Downloading", count = activeDownloads.size)
                 Spacer(modifier = Modifier.height(12.dp))
             }
@@ -254,18 +249,20 @@ fun HomeScreen(
                     EmptyStateCard(
                         icon = Icons.Default.Download,
                         title = "Nothing downloading",
-                        subtitle = "Paste a link above, or use the browser to find media on any site."
+                        subtitle = "Paste a link above, tap + below, or use the browser to find media on any site."
                     )
                 }
             } else {
                 items(activeDownloads, key = { it.id }) { item ->
-                    ActiveDownloadCard(
-                        item = item,
-                        onPause = { viewModel.pauseDownload(it) },
-                        onResume = { viewModel.resumeDownload(it) },
-                        onCancel = { viewModel.cancelDownload(it) }
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Column(modifier = Modifier.animateItem()) {
+                        ActiveDownloadCard(
+                            item = item,
+                            onPause = { viewModel.pauseDownload(it) },
+                            onResume = { viewModel.resumeDownload(it) },
+                            onCancel = { viewModel.cancelDownload(it) }
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
                 }
             }
 
@@ -276,19 +273,21 @@ fun HomeScreen(
                     Spacer(modifier = Modifier.height(12.dp))
                 }
                 items(failedDownloads, key = { "failed-" + it.id }) { item ->
-                    FailedDownloadCard(
-                        item = item,
-                        engineUpdating = engineUpdating,
-                        onRetry = { viewModel.retryDownload(item.id) },
-                        onRemove = { viewModel.cancelDownload(item.id) },
-                        onUpdateEngine = { viewModel.updateEngine() }
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Column(modifier = Modifier.animateItem()) {
+                        FailedDownloadCard(
+                            item = item,
+                            engineUpdating = engineUpdating,
+                            onRetry = { viewModel.retryDownload(item.id) },
+                            onRemove = { viewModel.cancelDownload(item.id) },
+                            onUpdateEngine = { viewModel.updateEngine() }
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
                 }
             }
 
             item {
-                Spacer(modifier = Modifier.height(30.dp))
+                Spacer(modifier = Modifier.height(28.dp))
                 SectionHeader(title = "Recently completed", count = null)
                 Spacer(modifier = Modifier.height(12.dp))
             }
@@ -303,32 +302,17 @@ fun HomeScreen(
                 }
             } else {
                 items(recentCompleted, key = { it.id }) { item ->
-                    RecentCompletedRow(item = item)
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Column(modifier = Modifier.animateItem()) {
+                        RecentCompletedRow(item = item)
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
                 }
             }
 
             item {
-                Spacer(modifier = Modifier.height(80.dp))
+                Spacer(modifier = Modifier.height(24.dp))
             }
         }
-
-        AddLinkBottomSheet(
-            uiState = addSheetState,
-            onDismiss = { viewModel.dismissSheet() },
-            onDownloadNow = { meta, formatId, label ->
-                viewModel.onDownloadNowClicked(meta, formatId, label)
-            },
-            onDownloadLater = { meta, formatId, label ->
-                viewModel.downloadLater(meta, formatId, label)
-            },
-            onConfirmMobileData = { meta, formatId ->
-                viewModel.confirmMobileDataDownload(meta, formatId)
-            },
-            onDownloadSelected = { meta, ids, later ->
-                viewModel.onDownloadSelected(meta, ids, later)
-            }
-        )
     }
 }
 
@@ -354,82 +338,22 @@ private fun NetworkPill(isWifi: Boolean) {
 }
 
 @Composable
-private fun LegacyLinkOmnibox(
-    urlInput: String,
-    onUrlChange: (String) -> Unit,
-    onPaste: () -> Unit,
-    onInspect: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(32.dp))
+private fun StatTile(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
             .background(DarkSurface)
-            .border(1.dp, DarkBorder, RoundedCornerShape(32.dp))
-            .padding(start = 18.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .border(1.dp, DarkBorder, RoundedCornerShape(18.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp)
     ) {
-        Icon(
-            imageVector = Icons.Default.Link,
-            contentDescription = null,
-            tint = TextSecondary,
-            modifier = Modifier.size(20.dp)
+        Text(
+            text = value,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = TextPrimary,
+            maxLines = 1
         )
-        Spacer(modifier = Modifier.width(12.dp))
-
-        BasicTextField(
-            value = urlInput,
-            onValueChange = onUrlChange,
-            singleLine = true,
-            textStyle = TextStyle(color = TextPrimary, fontSize = 15.sp),
-            cursorBrush = SolidColor(TextPrimary),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, keyboardType = KeyboardType.Uri),
-            keyboardActions = KeyboardActions(onGo = { onInspect() }),
-            modifier = Modifier.weight(1f),
-            decorationBox = { inner ->
-                Box(contentAlignment = Alignment.CenterStart) {
-                    if (urlInput.isEmpty()) {
-                        Text(
-                            text = "Paste a link to download",
-                            color = TextMuted,
-                            fontSize = 15.sp,
-                            maxLines = 1
-                        )
-                    }
-                    inner()
-                }
-            }
-        )
-
-        IconButton(
-            onClick = { if (urlInput.isBlank()) onPaste() else onUrlChange("") },
-            modifier = Modifier.size(40.dp)
-        ) {
-            Icon(
-                imageVector = if (urlInput.isBlank()) Icons.Default.ContentPaste else Icons.Default.Close,
-                contentDescription = if (urlInput.isBlank()) "Paste" else "Clear",
-                tint = TextSecondary,
-                modifier = Modifier.size(20.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.width(4.dp))
-
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .background(SiphonPrimaryGradient)
-                .clickable(onClick = onInspect),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                contentDescription = "Inspect link",
-                tint = OnAccent,
-                modifier = Modifier.size(22.dp)
-            )
-        }
+        Text(text = label, fontSize = 11.sp, color = TextSecondary)
     }
 }
 
@@ -437,10 +361,10 @@ private fun LegacyLinkOmnibox(
 private fun ActionChip(icon: ImageVector, label: String, onClick: () -> Unit) {
     Row(
         modifier = Modifier
+            .pressable(onClick = onClick)
             .clip(RoundedCornerShape(20.dp))
             .background(DarkSurface)
             .border(1.dp, DarkBorder, RoundedCornerShape(20.dp))
-            .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

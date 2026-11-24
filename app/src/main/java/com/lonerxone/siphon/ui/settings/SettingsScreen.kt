@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.PowerManager
+import android.provider.DocumentsContract
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -49,7 +50,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.documentfile.provider.DocumentFile
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.lonerxone.siphon.ui.components.BrandMark
@@ -70,11 +70,24 @@ import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+private fun folderNameFromUri(uriString: String?): String? {
+    if (uriString == null) return null
+    return try {
+        val id = DocumentsContract.getTreeDocumentId(Uri.parse(uriString))
+        val path = id.substringAfter(':', id)
+        val name = path.substringAfterLast('/')
+        if (name.isBlank()) "Storage root" else name
+    } catch (e: Exception) {
+        null
+    }
+}
+
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val prefs by viewModel.userPreferences.collectAsState()
+    val prefsLoaded by viewModel.preferencesLoaded.collectAsState()
     val engineState by viewModel.engineUpdateState.collectAsState()
     val context = LocalContext.current
 
@@ -104,25 +117,14 @@ fun SettingsScreen(
     val usingPhoneStorage = savedUri == null || Uri.parse(savedUri).scheme == "siphon"
     val sdMounted = remember(savedUri) { viewModel.isSdCardMounted }
 
-    // File checks run in the background so the screen opens instantly
-    var folderReady by remember { mutableStateOf(false) }
-    var folderName by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(savedUri, sdMounted) {
-        val result = withContext(Dispatchers.IO) {
-            if (savedUri != null && !usingPhoneStorage) {
-                try {
-                    val doc = DocumentFile.fromTreeUri(context, Uri.parse(savedUri))
-                    Pair(doc != null && doc.canWrite(), doc?.name)
-                } catch (e: Exception) {
-                    Pair(false, null)
-                }
-            } else {
-                Pair(false, null)
+    // A quick check with no file access, so the answer never flips back and forth
+    val folderReady = remember(savedUri) {
+        savedUri != null && !usingPhoneStorage &&
+            context.contentResolver.persistedUriPermissions.any {
+                it.uri.toString() == savedUri && it.isWritePermission
             }
-        }
-        folderReady = result.first
-        folderName = result.second
     }
+    val folderName = remember(savedUri) { folderNameFromUri(savedUri) }
 
     var engineVersion by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(engineState) {
@@ -136,16 +138,19 @@ fun SettingsScreen(
     }
 
     val locationStatus = when {
+        !prefsLoaded -> "Checking..."
         usingPhoneStorage -> "Phone storage (default)"
         folderReady -> "Folder selected: " + (folderName ?: "custom folder")
         else -> "Folder unavailable, using phone storage"
     }
     val locationStatusColor = when {
+        !prefsLoaded -> TextMuted
         folderReady -> AccentSuccess
         usingPhoneStorage -> TextSecondary
         else -> AccentWarning
     }
     val locationDetail = when {
+        !prefsLoaded -> "Reading your saved settings..."
         usingPhoneStorage && sdMounted -> "Files are saved to Download/SIPHON. An SD card is available if you want to use it."
         usingPhoneStorage -> "Files are saved to Download/SIPHON. No SD card detected."
         folderReady -> "New downloads are saved to this folder."
@@ -176,11 +181,16 @@ fun SettingsScreen(
                 ExpandableCard(
                     title = "Save location",
                     icon = when {
-                        folderReady -> Icons.Default.CheckCircle
-                        usingPhoneStorage -> Icons.Default.Folder
-                        else -> Icons.Default.SdCard
+                        prefsLoaded && folderReady -> Icons.Default.CheckCircle
+                        prefsLoaded && !usingPhoneStorage -> Icons.Default.SdCard
+                        else -> Icons.Default.Folder
                     },
-                    iconTint = if (folderReady) AccentSuccess else if (usingPhoneStorage) TextPrimary else AccentWarning,
+                    iconTint = when {
+                        !prefsLoaded -> TextMuted
+                        folderReady -> AccentSuccess
+                        usingPhoneStorage -> TextPrimary
+                        else -> AccentWarning
+                    },
                     initiallyExpanded = true,
                     status = locationStatus,
                     statusColor = locationStatusColor
@@ -195,7 +205,7 @@ fun SettingsScreen(
                         icon = { Icon(Icons.Default.Folder, contentDescription = null, tint = TextPrimary) }
                     )
 
-                    if (!usingPhoneStorage) {
+                    if (prefsLoaded && !usingPhoneStorage) {
                         Spacer(modifier = Modifier.height(8.dp))
                         SiphonSecondaryButton(
                             text = "Use phone storage",
@@ -442,7 +452,7 @@ fun SettingsScreen(
                     AboutPoint("No accounts, no ads, no tracking")
                 }
 
-                Spacer(modifier = Modifier.height(80.dp))
+                Spacer(modifier = Modifier.height(24.dp))
             }
         }
     }
