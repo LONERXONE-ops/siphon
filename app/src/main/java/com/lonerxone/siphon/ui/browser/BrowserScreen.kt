@@ -330,7 +330,7 @@ fun BrowserScreen(
             }
 
             // floating "found media" button
-            AnimatedVisibility(
+            androidx.compose.animation.AnimatedVisibility(
                 visible = BrowserState.found.isNotEmpty() && !BrowserState.showStart,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
